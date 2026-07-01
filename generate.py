@@ -108,6 +108,64 @@ def fetch_live(api_key):
     return payload or []
 
 
+def _http_get(url, api_key, timeout=60):
+    """GET with MARS basic auth. Returns (status_code, text). Never raises."""
+    token = base64.b64encode(f"{api_key}:".encode()).decode()
+    req = request.Request(url, headers={"Authorization": f"Basic {token}"})
+    try:
+        with request.urlopen(req, timeout=timeout) as r:
+            return getattr(r, "status", 200), r.read().decode()
+    except error.HTTPError as e:
+        try:
+            body = e.read().decode()[:300]
+        except Exception:
+            body = ""
+        return e.code, body
+    except Exception as e:  # URLError etc.
+        return None, str(e)
+
+
+REPORTS_ROOT = "https://marsapi.ams.usda.gov/services/v1.2/reports"
+
+
+def diagnose_and_resolve(api_key):
+    """Print URL-variant statuses and search the report index for the boxed
+    beef daily cutout report. Returns a working slug_id/name or None.
+    """
+    print("=== MARS diagnostic ===")
+    for label, url in [
+        ("slug-name no-query", f"{REPORTS_ROOT}/LM_XB403"),
+        ("slug-id 2453 no-query", f"{REPORTS_ROOT}/2453"),
+        ("root reports (TOC)", REPORTS_ROOT),
+    ]:
+        code, body = _http_get(url, api_key)
+        print(f"  [{label}] HTTP {code}  {str(body)[:120]!r}")
+    # search TOC for boxed beef
+    code, body = _http_get(REPORTS_ROOT, api_key)
+    if code == 200:
+        try:
+            data = json.loads(body)
+            rows = data.get("results", data) if isinstance(data, dict) else data
+            hits = []
+            for r in rows:
+                nm = str(r.get("report_name", "")).lower()
+                sn = str(r.get("slug_name", ""))
+                if "boxed beef" in nm or "xb40" in sn.lower():
+                    hits.append((r.get("slug_id"), sn, r.get("report_name")))
+            print(f"  TOC boxed-beef matches ({len(hits)}):")
+            for h in hits:
+                print("    ->", h)
+            # prefer the XB403 afternoon slug
+            for sid, sn, _nm in hits:
+                if "xb403" in sn.lower():
+                    return sid
+            if hits:
+                return hits[0][0]
+        except Exception as e:
+            print("  TOC parse error:", e)
+    return None
+
+
 def _num(v):
     try:
         return float(str(v).replace(",", "").replace("$", "").strip())
@@ -424,8 +482,29 @@ def main():
                 is_demo = False
                 print(f"LIVE mode: {good} product series pulled.")
         except (error.URLError, error.HTTPError, ValueError) as e:
-            print(f"WARNING: live fetch failed ({e}). Falling back to DEMO.")
-            series, is_demo = generate_demo(), True
+            print(f"WARNING: live fetch failed ({e}). Diagnosing...")
+            sid = diagnose_and_resolve(key)
+            if sid:
+                try:
+                    globals()["MARS_REPORT_ID"] = str(sid)
+                    print(f"Retrying with resolved slug_id={sid} ...")
+                    records = fetch_live(key)
+                    print(f"LIVE fetch (retry): {len(records)} records.")
+                    if records:
+                        _keys = list(records[0].keys())
+                        print("RECORD KEYS:", _keys)
+                        for _r in records[:4]:
+                            print("SAMPLE ROW:", {k: _r.get(k) for k in _keys})
+                    series = parse_live_records(records)
+                    for _k, _v in series.items():
+                        print(f"  mapped {_k}: {len(_v)} points")
+                    good = sum(1 for v in series.values() if len(v) >= 45)
+                    is_demo = good == 0
+                except Exception as e2:
+                    print(f"retry failed: {e2}")
+                    series, is_demo = generate_demo(), True
+            else:
+                series, is_demo = generate_demo(), True
     else:
         print("No USDA_API_KEY set — DEMO mode (sample data).")
         series, is_demo = generate_demo(), True
