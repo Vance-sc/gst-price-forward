@@ -4,5 +4,6 @@ __pycache__/
 index.html
 data.json
 public/
+backtest_results.json
 # Confidential GST figures — never publish
 gst_private.py
