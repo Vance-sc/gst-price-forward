@@ -40,14 +40,19 @@ own trailing 250 observations:
 4. **Choice/Select spread (15%)** — an unusually wide spread has preceded
    softness.
 
-**Validation:** weights/thresholds calibrated on 2019–2023, tested
-out-of-sample on 2024–2026 (walk-forward, no lookahead). Pooled test: 30d
-LOCK days +2.36% avg forward move vs HOLD −0.73%; 60d LOCK +4.59% vs HOLD
-−2.62%. Each card shows the validated hit rate for its bucket — that is the
-Confidence figure. **It is still not a forecast**: supply shocks, packer
-margins, and demand swings can override any signal. Re-run
+**Validation:** expanding-window walk-forward over 2018–2026. At every
+historical decision day, LOCK/HOLD thresholds were recalibrated as the
+70th/30th percentile of *prior* pooled scores only — no lookahead anywhere.
+Pooled test (n≈580–790 per bucket): 30d LOCK days +2.35% avg forward move
+vs HOLD −1.07%; 60d LOCK +3.94% vs HOLD −2.38%. The edge held in all three
+eras (2018–20, 2021–23, 2024–26). The production build recalibrates its
+thresholds by the same procedure on every run, so the live board is exactly
+what was validated. Each card shows the validated hit rate for its bucket —
+that is the Confidence figure. **It is still not a forecast**: supply
+shocks, packer margins, and demand swings can override any signal. Re-run
 `python backtest.py` after any model change and update `VALIDATION` in
-`generate.py`; if the pooled test fails, don't ship the change.
+`generate.py`; if the pooled test fails the printed pass criterion, don't
+ship the change.
 
 **Basis note:** USDA quotes are the *packer→wholesale* price. Your vendor
 cost tracks them with a lag and a spread — read the **direction**, not the

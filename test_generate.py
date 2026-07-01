@@ -87,7 +87,7 @@ check("v2: rich+rallying -> rel_value component low",
 check("v2: rich+rallying -> momentum component low (contrarian)",
       det["momentum"] < 25, str(det["momentum"]))
 check("v2: rich+rallying -> composite below HOLD threshold",
-      sc < g.THRESHOLDS[30]["hold"], f"{sc:.1f}")
+      sc < g.DEFAULT_THRESHOLDS[30]["hold"], f"{sc:.1f}")
 
 # mirror: a 10% dip -> cheap vs cutout + down-momentum -> high score
 flat_dip = [(x, 400.0 - (40.0 if i >= len(days) - 5 else 0.0), 50000)
@@ -95,7 +95,7 @@ flat_dip = [(x, 400.0 - (40.0 if i >= len(days) - 5 else 0.0), 50000)
 F2 = g.build_features(flat_dip, cut_flat)
 sc2, det2 = g.score_at(F2, i_last, 30)
 check("v2: cheap+dipping -> composite above LOCK threshold",
-      sc2 >= g.THRESHOLDS[30]["lock"], f"{sc2:.1f}")
+      sc2 >= g.DEFAULT_THRESHOLDS[30]["lock"], f"{sc2:.1f}")
 
 # volume: surge in recent lbs with flat price -> volume component high
 vol_surge = [(x, 400.0, 50000 if i < len(days) - 15 else 250000)
@@ -120,20 +120,29 @@ check("v2: 30d and 60d momentum use different windows",
       f"{F5['roc30'][i_last]:.1f} vs {F5['roc60'][i_last]:.1f}")
 
 # ---------------------------------------------------------------- labels/validation
-check("label LOCK at 30d threshold",
-      g.label_for(g.THRESHOLDS[30]["lock"], 30)[0] == "LOCK")
-check("label HOLD below 30d hold threshold",
-      g.label_for(g.THRESHOLDS[30]["hold"] - 0.1, 30)[0] == "HOLD")
+check("label LOCK at default 30d threshold",
+      g.label_for(g.DEFAULT_THRESHOLDS[30]["lock"], 30)[0] == "LOCK")
+check("label HOLD below default 30d hold threshold",
+      g.label_for(g.DEFAULT_THRESHOLDS[30]["hold"] - 0.1, 30)[0] == "HOLD")
+check("label_for honors dynamic thresholds",
+      g.label_for(55, 30, {30: {"lock": 54, "hold": 40},
+                           60: {"lock": 62, "hold": 39}})[0] == "LOCK")
 v, conf = g.validation_for("chuck_roll", 60, "LOCK")
-check("validation lookup: chuck_roll 60d LOCK hit .70 -> High",
-      v["hit"] == 0.70 and conf == "High", f"{v} {conf}")
+check("validation lookup: chuck_roll 60d LOCK hit .65 -> High",
+      v["hit"] == 0.65 and conf == "High", f"{v} {conf}")
 v2_, conf2 = g.validation_for("chuck_roll", 60, "HOLD")
 check("validation: HOLD low hit rate = High confidence (inverse)",
       conf2 == "High", f"{v2_} {conf2}")
 v3_, conf3 = g.validation_for("shoulder_clod", 30, "LOCK")
-check("validation: clod 30d weak edge -> Low", conf3 == "Low", str(v3_))
+check("validation: clod 30d modest edge -> Medium",
+      conf3 == "Medium", str(v3_))
 vp, _ = g.validation_for("nonexistent", 30, "SPLIT")
-check("validation: pooled fallback works", vp["n"] == 235, str(vp))
+check("validation: pooled fallback works", vp["n"] == 792, str(vp))
+# thresholds fall back to defaults when history is too thin
+th = g.pooled_thresholds({"x": g.build_features(flat_spike[:200], cut_flat)})
+check("pooled_thresholds: thin history -> defaults",
+      th == g.DEFAULT_THRESHOLDS or th[30] == g.DEFAULT_THRESHOLDS[30],
+      str(th))
 
 check("weights sum to 1.0", abs(sum(g.WEIGHTS.values()) - 1.0) < 1e-9)
 

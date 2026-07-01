@@ -117,49 +117,64 @@ FETCH_YEARS = 5          # features need ~500 obs of warmup; 5y ≈ 1,250
 WEIGHTS = {"rel_value": 0.40, "momentum": 0.25,
            "volume": 0.20, "cs_spread": 0.15}
 
-# Thresholds = 70th / 30th percentile of pooled 2019-2023 train scores.
-THRESHOLDS = {30: {"lock": 60.9, "hold": 40.3},
-              60: {"lock": 61.9, "hold": 39.4}}
+# Thresholds are SELF-CALIBRATING at build time: 70th/30th percentile of
+# pooled decision-day scores over the fetched history (see
+# pooled_thresholds). This mirrors the expanding-window validation
+# procedure exactly. Static fallback only if history is too thin.
+DEFAULT_THRESHOLDS = {30: {"lock": 61.0, "hold": 40.0},
+                      60: {"lock": 62.0, "hold": 39.5}}
 
-# Out-of-sample validation (2024-01 → 2026-07, walk-forward, decisions every
-# 5 trading days). mean = avg forward price move on days in that bucket;
-# hit = share of days the price rose (for HOLD, low hit is GOOD — you wanted
-# it to fall). Shown on the dashboard; regenerate via backtest.py if the
-# model changes.
+# Out-of-sample validation: EXPANDING-WINDOW walk-forward, 2018-08-15 →
+# 2026-07-01 (thresholds recalibrated at every decision day from prior
+# scores only; decisions every 5 trading days; data from 2016 for warmup).
+# Edge held in all three eras (2018-20, 2021-23, 2024-26).
+# mean = avg forward price move on days in that bucket; hit = share of days
+# the price rose (for HOLD, a LOW hit rate is good — you were waiting).
+# Regenerate via backtest.py after any model change.
 VALIDATION = {
     "pooled": {
-        30: {"LOCK": {"mean": 2.36, "hit": 0.67, "n": 213},
-             "SPLIT": {"mean": 0.67, "hit": 0.52, "n": 235},
-             "HOLD": {"mean": -0.73, "hit": 0.48, "n": 169}},
-        60: {"LOCK": {"mean": 4.59, "hit": 0.71, "n": 203},
-             "SPLIT": {"mean": 1.92, "hit": 0.55, "n": 221},
-             "HOLD": {"mean": -2.62, "hit": 0.35, "n": 173}},
+        30: {"LOCK": {"mean": 2.35, "hit": 0.63, "n": 577},
+             "SPLIT": {"mean": 0.85, "hit": 0.53, "n": 792},
+             "HOLD": {"mean": -1.07, "hit": 0.44, "n": 612}},
+        60: {"LOCK": {"mean": 3.94, "hit": 0.66, "n": 613},
+             "SPLIT": {"mean": 2.28, "hit": 0.57, "n": 738},
+             "HOLD": {"mean": -2.38, "hit": 0.40, "n": 610}},
     },
     "chuck_roll": {
-        30: {"LOCK": {"mean": 3.19, "hit": 0.74, "n": 53},
-             "HOLD": {"mean": -1.78, "hit": 0.46, "n": 35}},
-        60: {"LOCK": {"mean": 5.79, "hit": 0.70, "n": 50},
-             "HOLD": {"mean": -8.68, "hit": 0.17, "n": 35}}},
+        30: {"LOCK": {"mean": 1.37, "hit": 0.59, "n": 140},
+             "SPLIT": {"mean": 1.17, "hit": 0.48, "n": 141},
+             "HOLD": {"mean": -0.50, "hit": 0.47, "n": 116}},
+        60: {"LOCK": {"mean": 3.46, "hit": 0.65, "n": 150},
+             "SPLIT": {"mean": 4.30, "hit": 0.59, "n": 128},
+             "HOLD": {"mean": -3.85, "hit": 0.31, "n": 115}}},
     "flap": {
-        30: {"LOCK": {"mean": 2.11, "hit": 0.67, "n": 36},
-             "HOLD": {"mean": 0.64, "hit": 0.57, "n": 37}},
-        60: {"LOCK": {"mean": 3.71, "hit": 0.74, "n": 34},
-             "HOLD": {"mean": -0.71, "hit": 0.39, "n": 41}}},
+        30: {"LOCK": {"mean": 3.06, "hit": 0.64, "n": 120},
+             "SPLIT": {"mean": 1.07, "hit": 0.60, "n": 149},
+             "HOLD": {"mean": -1.42, "hit": 0.46, "n": 126}},
+        60: {"LOCK": {"mean": 5.01, "hit": 0.67, "n": 126},
+             "SPLIT": {"mean": 3.04, "hit": 0.64, "n": 138},
+             "HOLD": {"mean": -3.29, "hit": 0.36, "n": 127}}},
     "shoulder_clod": {
-        30: {"LOCK": {"mean": 0.89, "hit": 0.53, "n": 43},
-             "HOLD": {"mean": 0.20, "hit": 0.55, "n": 29}},
-        60: {"LOCK": {"mean": 2.78, "hit": 0.50, "n": 38},
-             "HOLD": {"mean": -1.51, "hit": 0.43, "n": 30}}},
+        30: {"LOCK": {"mean": 1.32, "hit": 0.56, "n": 96},
+             "SPLIT": {"mean": 1.74, "hit": 0.55, "n": 181},
+             "HOLD": {"mean": -1.24, "hit": 0.39, "n": 119}},
+        60: {"LOCK": {"mean": 2.99, "hit": 0.58, "n": 106},
+             "SPLIT": {"mean": 2.60, "hit": 0.59, "n": 149},
+             "HOLD": {"mean": -0.94, "hit": 0.47, "n": 137}}},
     "short_rib": {
-        30: {"LOCK": {"mean": 2.92, "hit": 0.74, "n": 53},
-             "HOLD": {"mean": -1.63, "hit": 0.36, "n": 25}},
-        60: {"LOCK": {"mean": 2.89, "hit": 0.74, "n": 50},
-             "HOLD": {"mean": 0.07, "hit": 0.48, "n": 21}}},
+        30: {"LOCK": {"mean": 2.94, "hit": 0.64, "n": 129},
+             "SPLIT": {"mean": -0.40, "hit": 0.47, "n": 144},
+             "HOLD": {"mean": -1.77, "hit": 0.46, "n": 123}},
+        60: {"LOCK": {"mean": 2.51, "hit": 0.59, "n": 128},
+             "SPLIT": {"mean": 0.26, "hit": 0.50, "n": 158},
+             "HOLD": {"mean": -2.03, "hit": 0.47, "n": 106}}},
     "round": {
-        30: {"LOCK": {"mean": 2.32, "hit": 0.64, "n": 28},
-             "HOLD": {"mean": -1.17, "hit": 0.44, "n": 43}},
-        60: {"LOCK": {"mean": 8.57, "hit": 0.90, "n": 31},
-             "HOLD": {"mean": -1.65, "hit": 0.35, "n": 46}}},
+        30: {"LOCK": {"mean": 3.15, "hit": 0.75, "n": 92},
+             "SPLIT": {"mean": 0.54, "hit": 0.55, "n": 177},
+             "HOLD": {"mean": -0.41, "hit": 0.45, "n": 128}},
+        60: {"LOCK": {"mean": 6.07, "hit": 0.80, "n": 103},
+             "SPLIT": {"mean": 1.72, "hit": 0.57, "n": 165},
+             "HOLD": {"mean": -1.99, "hit": 0.40, "n": 125}}},
 }
 
 PUBLISH_POINTS = 270
@@ -424,8 +439,29 @@ def score_at(F, i, horizon_days):
     return _clamp(score), detail
 
 
-def label_for(score, horizon_days):
-    th = THRESHOLDS[30 if horizon_days <= 30 else 60]
+def pooled_thresholds(feature_map):
+    """Self-calibrating LOCK/HOLD cutoffs: 70th/30th percentile of pooled
+    decision-day scores (every 5th obs after warmup) across all products —
+    the same procedure the expanding-window validation used."""
+    th = {}
+    for h in (30, 60):
+        scores = []
+        for _key, F in feature_map.items():
+            for i in range(520, len(F["rv"]), 5):
+                s, _d = score_at(F, i, h)
+                if s is not None:
+                    scores.append(s)
+        if len(scores) >= 150:
+            scores.sort()
+            th[h] = {"lock": round(scores[int(len(scores) * 0.7)], 1),
+                     "hold": round(scores[int(len(scores) * 0.3)], 1)}
+        else:
+            th[h] = dict(DEFAULT_THRESHOLDS[h])
+    return th
+
+
+def label_for(score, horizon_days, thresholds=None):
+    th = (thresholds or DEFAULT_THRESHOLDS)[30 if horizon_days <= 30 else 60]
     if score >= th["lock"]:
         return ("LOCK", "Cheap vs cutout / post-dip — locking looks favorable")
     if score >= th["hold"]:
@@ -481,12 +517,18 @@ def _calendar_change_pct(series, days):
 
 def analyze(series, cutout):
     results = {}
+    feature_map = {}
+    for prod in PRODUCTS:
+        pts = series.get(prod["key"], [])
+        if len(pts) >= 400 and cutout:
+            feature_map[prod["key"]] = build_features(pts, cutout)
+    thresholds = pooled_thresholds(feature_map)
     for prod in PRODUCTS:
         key = prod["key"]
         pts = series.get(key, [])
-        if len(pts) < 400 or not cutout:
+        if key not in feature_map:
             continue
-        F = build_features(pts, cutout)
+        F = feature_map[key]
         prices = [p for _d, p, _l in pts]
         vol = volatility(prices)
         horizons = {}
@@ -496,7 +538,7 @@ def analyze(series, cutout):
             if score is None:
                 usable = False
                 break
-            tag, msg = label_for(score, h)
+            tag, msg = label_for(score, h, thresholds)
             vstats, conf = validation_for(key, h, tag)
             horizons[h] = {
                 "score": round(score, 1),
@@ -534,7 +576,7 @@ def analyze(series, cutout):
             "horizons": horizons,
             "series": [[d.isoformat(), round(p, 2)] for d, p, _l in recent],
         }
-    return results
+    return results, thresholds
 
 
 def _business_days_between(a, b):
@@ -550,7 +592,7 @@ def _business_days_between(a, b):
 # RENDER
 # ---------------------------------------------------------------------------
 def build(series, cutout, is_demo, warnings):
-    analysis = analyze(series, cutout)
+    analysis, thresholds = analyze(series, cutout)
     last_dates = [pts[-1][0] for pts in series.values() if pts]
     last_market = max(last_dates) if last_dates else None
     today = dt.date.today()
@@ -576,9 +618,10 @@ def build(series, cutout, is_demo, warnings):
         "source": "USDA AMS Market News — LM_XB403 (National Daily Boxed "
                   "Beef Cutout & Cuts), LMR DataMart",
         "engine": "v2 (rel-value / contrarian momentum / volume / C-S "
-                  "anomaly; validated out-of-sample 2024-26)",
+                  "anomaly; expanding-window validated 2018-2026, "
+                  "self-calibrating thresholds)",
         "weights": WEIGHTS,
-        "thresholds": THRESHOLDS,
+        "thresholds": thresholds,
         "validation_pooled": VALIDATION["pooled"],
     }
     out = {"meta": meta, "products": analysis}

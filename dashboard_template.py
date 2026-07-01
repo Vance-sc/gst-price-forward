@@ -135,13 +135,16 @@ HTML = r"""<!DOCTYPE html>
       <li><b>Choice/Select spread (15%)</b> — an unusually wide quality spread
       has preceded softness.</li>
     </ul>
-    <p><b>Validation:</b> weights and thresholds were calibrated on 2019-2023
-    and tested out-of-sample on 2024-2026 (walk-forward, no lookahead). Pooled
-    test results: 30-day LOCK days preceded +2.4% average moves vs −0.7% on
-    HOLD days; 60-day LOCK +4.6% vs HOLD −2.6%. Each card shows the validated
-    hit rate for its current bucket — that figure, not the score itself, is
-    the confidence measure. Past behavior is no guarantee; supply shocks and
-    demand swings can override any signal.</p>
+    <p><b>Validation:</b> expanding-window walk-forward over 2018-2026 — at
+    every historical decision day the LOCK/HOLD thresholds were recalibrated
+    from prior data only, then graded against what prices actually did (no
+    lookahead). Pooled test: 30-day LOCK days preceded +2.4% average moves vs
+    −1.1% on HOLD days (n=577/612); 60-day LOCK +3.9% vs HOLD −2.4%
+    (n=613/610). The edge held in all three eras (2018-20, 2021-23, 2024-26).
+    The live board recalibrates its thresholds the same way on every build.
+    Each card shows the validated hit rate for its current bucket — that
+    figure, not the score itself, is the confidence measure. Past behavior is
+    no guarantee; supply shocks and demand swings can override any signal.</p>
     <p><b>Basis note:</b> USDA quotes are the packer&rarr;wholesale price. Your
     vendor cost tracks them with a lag and a spread, so read the <i>direction</i>,
     not the dollar figure, as your cost signal.</p>
@@ -191,7 +194,7 @@ const sigColor = s => s==='LOCK'?'var(--red)': s==='SPLIT'?'var(--amber)':'var(-
 function hz(h,d){
   const c=d.components;
   const v=d.validation;
-  const vline = v ? '<div class="conf">Out-of-sample ’24-’26: this bucket averaged <b>'+
+  const vline = v ? '<div class="conf">Walk-forward ’18-’26: this bucket averaged <b>'+
     (v.mean>=0?'+':'')+v.mean+'%</b> fwd, price rose '+Math.round(v.hit*100)+'% of days (n='+v.n+')</div>' : '';
   return '<div class="hz">'+
     '<div class="hz-ttl">'+h+'-Day Outlook</div>'+
@@ -267,7 +270,7 @@ order.forEach((key,idx)=>{
 document.getElementById('foot').innerHTML =
   'Data: USDA Agricultural Marketing Service, Livestock Market News '+
   '(report LM_XB403, LMR DataMart). Decision-support tool — not a price '+
-  'forecast or financial advice. v2 signal validated out-of-sample 2024-26; '+
+  'forecast or financial advice. v2 signal validated walk-forward 2018-26; '+
   'past behavior is no guarantee (see backtest.py). Built for GST Meat Co.';
 </script>
 </body>
