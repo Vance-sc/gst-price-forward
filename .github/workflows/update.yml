@@ -1,10 +1,13 @@
 name: Update forward-buy dashboard
 
-# Runs every weekday evening (after USDA's PM boxed-beef report) and can be
-# triggered by hand from the Actions tab. Publishes index.html to GitHub Pages.
+# Runs every weekday evening (after USDA's PM boxed-beef report, published
+# ~2:45pm Central) and can be triggered by hand from the Actions tab.
+# Publishes index.html + data.json to GitHub Pages.
+#
+# No secrets required — the LMR DataMart is a keyless public API.
 on:
   schedule:
-    - cron: "0 22 * * 1-5"   # 22:00 UTC ~ 4-5pm Central, after the PM report
+    - cron: "0 22 * * 1-5"   # 22:00 UTC = 4-5pm Central, after the PM report
   workflow_dispatch: {}        # manual "Run workflow" button
 
 permissions:
@@ -19,6 +22,7 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -33,7 +37,6 @@ jobs:
 
       - name: Build dashboard
         env:
-          USDA_API_KEY: ${{ secrets.USDA_API_KEY }}
           PUBLIC_BUILD: "1"   # strip GST's confidential $/margin figures from the public site
         run: |
           python generate.py
