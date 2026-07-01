@@ -134,9 +134,7 @@ def fetch_live(api_key):
                     dates = sorted({str(x.get("report_date")) for x in rows
                                     if x.get("report_date")})
                     print(f"SECTION '{sec}' [{tag}]: {len(rows)} rows, "
-                          f"{len(dates)} dates {dates[:1]}..{dates[-1:]} ")
-                    print("  KEYS:", list(rows[0].keys()))
-                    print("  SAMPLE:", {k: rows[0].get(k) for k in rows[0].keys()})
+                          f"{len(dates)} dates")
                     got = rows
                     break
                 else:
@@ -208,13 +206,14 @@ def parse_live_records(records):
             continue
         for (key, _name, _unit, match) in PRODUCTS:
             if all(m in label for m in match):
-                # keep last price seen per date (PM report is cumulative)
-                series[key][date] = price
+                series[key].setdefault(date, []).append(price)
                 break
-    # to sorted lists
+    # average the matching specs per date, then sort chronologically
     out = {}
     for key, dmap in series.items():
-        out[key] = sorted(dmap.items())
+        pts = [(d, sum(v) / len(v)) for d, v in dmap.items() if v]
+        out[key] = sorted(pts)
+    print("mapped points:", {k: len(v) for k, v in out.items()})
     return out
 
 
@@ -455,20 +454,6 @@ def main():
     if key:
         try:
             records = fetch_live(key)
-            _n = len(records) if hasattr(records, "__len__") else "?"
-            print(f"LIVE fetch: {_n} raw records; type={type(records).__name__}")
-            if isinstance(records, dict):
-                print("RESULTS-DICT KEYS:", list(records.keys())[:20])
-                _first = next(iter(records.values())) if records else None
-                print("  first value type:", type(_first).__name__,
-                      "repr:", repr(_first)[:300])
-            elif records:
-                e0 = records[0]
-                print("elem0 type:", type(e0).__name__, "repr:", repr(e0)[:400])
-                if isinstance(e0, dict):
-                    print("RECORD KEYS:", list(e0.keys()))
-                    for _r in records[:4]:
-                        print("SAMPLE ROW:", _r)
             series = parse_live_records(records)
             for _k, _v in series.items():
                 print(f"  mapped {_k}: {len(_v)} points")
@@ -489,15 +474,7 @@ def main():
                     globals()["MARS_REPORT_ID"] = str(sid)
                     print(f"Retrying with resolved slug_id={sid} ...")
                     records = fetch_live(key)
-                    print(f"LIVE fetch (retry): {len(records)} records.")
-                    if records:
-                        _keys = list(records[0].keys())
-                        print("RECORD KEYS:", _keys)
-                        for _r in records[:4]:
-                            print("SAMPLE ROW:", {k: _r.get(k) for k in _keys})
                     series = parse_live_records(records)
-                    for _k, _v in series.items():
-                        print(f"  mapped {_k}: {len(_v)} points")
                     good = sum(1 for v in series.values() if len(v) >= 45)
                     is_demo = good == 0
                 except Exception as e2:
