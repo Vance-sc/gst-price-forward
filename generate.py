@@ -88,13 +88,11 @@ PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
 # DATA FETCH — live
 # ---------------------------------------------------------------------------
 def _extract_rows(payload):
-    """Normalize a MARS/DataMart payload into a list of dict rows."""
+    """Pull the data-row list out of a DataMart section payload."""
     if isinstance(payload, dict):
-        for k in ("results", "Results", "report", "data"):
-            v = payload.get(k)
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                return v
-        # dict of sections -> flatten lists of dicts
+        v = payload.get("results")
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, dict)]
         rows = []
         for v in payload.values():
             if isinstance(v, list):
@@ -105,46 +103,42 @@ def _extract_rows(payload):
     return []
 
 
+# DataMart sections that carry per-cut prices (plus the overall cutout index).
+PRICE_SECTIONS = ["Current Cutout Values", "Choice Cuts", "Select Cuts"]
+
+
 def fetch_live(api_key):
-    """Pull boxed-beef rows from the LMR DataMart. Tries a few URL/auth
-    combinations and logs raw response heads so the exact shape is visible."""
+    """Pull boxed-beef price rows from the LMR DataMart, one section at a time.
+    The DataMart is open (no key needed); each section is a path segment and
+    accepts a report_begin_date range for history."""
     end = dt.date.today()
     begin = end - dt.timedelta(days=HISTORY_DAYS)
-    base = API_BASE + MARS_REPORT_ID
     dr = f"{begin:%m/%d/%Y}:{end:%m/%d/%Y}"
-    url_candidates = [
-        base,                                              # latest snapshot
-        base + "?q=report_begin_date=" + parse.quote(dr, safe="/:"),
-        base + "/Current+Cutout+Values",                   # a named section
-    ]
-    for url in url_candidates:
-        for use_auth in (False, True):
-            headers = {}
-            if use_auth and api_key:
-                headers["Authorization"] = ("Basic " +
-                    base64.b64encode(f"{api_key}:".encode()).decode())
-            try:
-                req = request.Request(url, headers=headers)
-                with request.urlopen(req, timeout=90) as r:
-                    raw = r.read().decode()
-                print(f"TRY {url[:95]} auth={use_auth} -> {len(raw)}b "
-                      f"head={raw[:200]!r}")
-                try:
-                    payload = json.loads(raw)
-                except ValueError:
-                    continue
-                rows = _extract_rows(payload)
-                if rows:
-                    print(f"  -> extracted {len(rows)} dict rows; "
-                          f"keys={list(rows[0].keys())}")
-                    return rows
-            except error.HTTPError as e:
-                print(f"TRY {url[:95]} auth={use_auth} -> HTTP {e.code}")
-                continue
-            except Exception as ex:
-                print(f"TRY {url[:95]} auth={use_auth} -> ERR {ex}")
-                continue
-    return []
+    all_rows = []
+    for sec in PRICE_SECTIONS:
+        url = (API_BASE + MARS_REPORT_ID + "/" + parse.quote(sec)
+               + "?q=report_begin_date=" + parse.quote(dr, safe="/:"))
+        try:
+            with request.urlopen(request.Request(url), timeout=120) as r:
+                raw = r.read().decode()
+            payload = json.loads(raw)
+            rows = _extract_rows(payload)
+            if rows:
+                print(f"SECTION '{sec}': {len(rows)} rows; "
+                      f"keys={list(rows[0].keys())}")
+                print("  SAMPLE:", {k: rows[0].get(k) for k in rows[0].keys()})
+                for row in rows:
+                    row["_section"] = sec
+                all_rows.extend(rows)
+            else:
+                print(f"SECTION '{sec}': 0 rows head={raw[:140]!r}")
+        except error.HTTPError as e:
+            print(f"SECTION '{sec}': HTTP {e.code}")
+        except Exception as ex:
+            print(f"SECTION '{sec}': ERR {ex}")
+    print(f"TOTAL price rows: {len(all_rows)}")
+    return all_rows
+
 
 
 def _num(v):
