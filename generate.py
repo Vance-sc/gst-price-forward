@@ -109,7 +109,17 @@ def fetch_live(api_key):
             with request.urlopen(req, timeout=90) as r:
                 payload = json.loads(r.read().decode())
             if isinstance(payload, dict):
-                return payload.get("results") or payload.get("Results") or []
+                print("PAYLOAD KEYS:", list(payload.keys()))
+                for _k in list(payload.keys())[:15]:
+                    _v = payload[_k]
+                    _ln = len(_v) if hasattr(_v, "__len__") else "-"
+                    print(f"  payload[{_k!r}] type={type(_v).__name__} len={_ln}")
+                res = payload.get("results")
+                if res is None:
+                    res = payload.get("Results") or []
+                return res
+            print("PAYLOAD is", type(payload).__name__, "len",
+                  len(payload) if hasattr(payload, "__len__") else "-")
             return payload or []
         except error.HTTPError as e:
             last_err = e
@@ -203,7 +213,11 @@ def parse_live_records(records):
     in the label. Kept deliberately tolerant of field-name variation.
     """
     series = {k: {} for (k, *_ ) in PRODUCTS}
+    if isinstance(records, dict):
+        records = records.get("results") or list(records.values())
     for row in records:
+        if not isinstance(row, dict):
+            continue
         low = {str(k).lower(): v for k, v in row.items()}
         # date
         date = None
@@ -485,12 +499,20 @@ def main():
     if key:
         try:
             records = fetch_live(key)
-            print(f"LIVE fetch: {len(records)} raw records returned.")
-            if records:
-                _keys = list(records[0].keys())
-                print("RECORD KEYS:", _keys)
-                for _r in records[:4]:
-                    print("SAMPLE ROW:", {k: _r.get(k) for k in _keys})
+            _n = len(records) if hasattr(records, "__len__") else "?"
+            print(f"LIVE fetch: {_n} raw records; type={type(records).__name__}")
+            if isinstance(records, dict):
+                print("RESULTS-DICT KEYS:", list(records.keys())[:20])
+                _first = next(iter(records.values())) if records else None
+                print("  first value type:", type(_first).__name__,
+                      "repr:", repr(_first)[:300])
+            elif records:
+                e0 = records[0]
+                print("elem0 type:", type(e0).__name__, "repr:", repr(e0)[:400])
+                if isinstance(e0, dict):
+                    print("RECORD KEYS:", list(e0.keys()))
+                    for _r in records[:4]:
+                        print("SAMPLE ROW:", _r)
             series = parse_live_records(records)
             for _k, _v in series.items():
                 print(f"  mapped {_k}: {len(_v)} points")
