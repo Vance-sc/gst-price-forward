@@ -147,19 +147,28 @@ def diagnose_and_resolve(api_key):
             data = json.loads(body)
             rows = data.get("results", data) if isinstance(data, dict) else data
             hits = []
+            beefs = []
             for r in rows:
-                nm = str(r.get("report_name", "")).lower()
+                title = str(r.get("report_title", "") or r.get("report_name", ""))
                 sn = str(r.get("slug_name", ""))
-                if "boxed beef" in nm or "xb40" in sn.lower():
-                    hits.append((r.get("slug_id"), sn, r.get("report_name")))
-            print(f"  TOC boxed-beef matches ({len(hits)}):")
+                low = title.lower()
+                if "beef" in low:
+                    beefs.append((r.get("slug_id"), sn, title))
+                if "boxed beef" in low and "cut" in low:
+                    hits.append((r.get("slug_id"), sn, title))
+            print(f"  TOC beef reports ({len(beefs)}):")
+            for h in beefs:
+                print("    beef->", h)
+            print(f"  TOC boxed-beef-cut matches ({len(hits)}):")
             for h in hits:
-                print("    ->", h)
-            # prefer the XB403 afternoon slug
-            for sid, sn, _nm in hits:
-                if "xb403" in sn.lower():
+                print("    hit->", h)
+            # prefer the Afternoon/PM boxed beef cutout report
+            for sid, sn, title in hits:
+                if "afternoon" in title.lower() or " pm" in title.lower():
+                    print(f"  -> chose slug_id={sid} ({title})")
                     return sid
             if hits:
+                print(f"  -> chose slug_id={hits[0][0]} ({hits[0][2]})")
                 return hits[0][0]
         except Exception as e:
             print("  TOC parse error:", e)
