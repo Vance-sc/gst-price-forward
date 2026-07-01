@@ -1,0 +1,51 @@
+name: Update forward-buy dashboard
+
+# Runs every weekday evening (after USDA's PM boxed-beef report) and can be
+# triggered by hand from the Actions tab. Publishes index.html to GitHub Pages.
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"   # 22:00 UTC ~ 4-5pm Central, after the PM report
+  workflow_dispatch: {}        # manual "Run workflow" button
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build dashboard
+        env:
+          USDA_API_KEY: ${{ secrets.USDA_API_KEY }}
+          PUBLIC_BUILD: "1"   # strip GST's confidential $/margin figures from the public site
+        run: |
+          python generate.py
+          mkdir -p public
+          cp index.html public/index.html
+          cp data.json  public/data.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
