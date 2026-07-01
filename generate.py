@@ -39,7 +39,7 @@ from urllib import request, parse, error
 # Field names in the live API vary slightly by report; MATCH is a list of
 # lowercase substrings, any of which identifies the row. Adjust after first
 # live pull if needed (see README "Confirming field names").
-MARS_REPORT_ID = "LM_XB403"   # API slug_name (not the website 2453 id)
+MARS_REPORT_ID = "2453"   # LMR DataMart slug id for LM_XB403 (boxed beef PM)
 
 # GST's top 5 beef products (by sales, grouped by name across all codes),
 # each mapped to the closest USDA boxed-beef item. MATCH = lowercase substrings
@@ -77,7 +77,7 @@ HISTORY_DAYS = 400
 # Signal component weights (must sum to 1.0)
 WEIGHTS = {"momentum": 0.40, "seasonality": 0.30, "range": 0.30}
 
-API_BASE = "https://marsapi.ams.usda.gov/services/v1.2/reports/"
+API_BASE = "https://mpr.datamart.ams.usda.gov/services/v1.1/reports/"  # LMR DataMart
 
 # When set (e.g. in GitHub Actions), the published build omits GST's
 # confidential dollar figures/margins — pounds only. Local runs show full detail.
@@ -96,16 +96,29 @@ def fetch_live(api_key):
     end = dt.date.today()
     begin = end - dt.timedelta(days=HISTORY_DAYS)
     q = f"report_begin_date={begin:%m/%d/%Y}:{end:%m/%d/%Y}"
-    url = (API_BASE + MARS_REPORT_ID + "?q=" + parse.quote(q, safe="=/:")
-           + "&allSections=true")
-    token = base64.b64encode(f"{api_key}:".encode()).decode()
-    req = request.Request(url, headers={"Authorization": f"Basic {token}"})
-    with request.urlopen(req, timeout=90) as r:
-        payload = json.loads(r.read().decode())
-    # MARS wraps rows under 'results' (v1.2). Be defensive about shape.
-    if isinstance(payload, dict):
-        return payload.get("results") or payload.get("Results") or []
-    return payload or []
+    url = (API_BASE + MARS_REPORT_ID + "?q=" + parse.quote(q, safe="=/:"))
+    # The LMR DataMart is typically open; try without auth, then with the key.
+    last_err = None
+    for use_auth in (False, True):
+        headers = {}
+        if use_auth and api_key:
+            token = base64.b64encode(f"{api_key}:".encode()).decode()
+            headers["Authorization"] = f"Basic {token}"
+        try:
+            req = request.Request(url, headers=headers)
+            with request.urlopen(req, timeout=90) as r:
+                payload = json.loads(r.read().decode())
+            if isinstance(payload, dict):
+                return payload.get("results") or payload.get("Results") or []
+            return payload or []
+        except error.HTTPError as e:
+            last_err = e
+            if e.code in (401, 403) and not use_auth:
+                continue  # retry with auth
+            raise
+    if last_err:
+        raise last_err
+    return []
 
 
 def _http_get(url, api_key, timeout=60):
