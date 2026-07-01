@@ -39,7 +39,7 @@ from urllib import request, parse, error
 # Field names in the live API vary slightly by report; MATCH is a list of
 # lowercase substrings, any of which identifies the row. Adjust after first
 # live pull if needed (see README "Confirming field names").
-MARS_REPORT_ID = "2453"
+MARS_REPORT_ID = "LM_XB403"   # API slug_name (not the website 2453 id)
 
 # GST's top 5 beef products (by sales, grouped by name across all codes),
 # each mapped to the closest USDA boxed-beef item. MATCH = lowercase substrings
@@ -96,10 +96,11 @@ def fetch_live(api_key):
     end = dt.date.today()
     begin = end - dt.timedelta(days=HISTORY_DAYS)
     q = f"report_begin_date={begin:%m/%d/%Y}:{end:%m/%d/%Y}"
-    url = API_BASE + MARS_REPORT_ID + "?" + parse.quote(f"q={q}", safe="=&:/")
+    url = (API_BASE + MARS_REPORT_ID + "?q=" + parse.quote(q, safe="=/:")
+           + "&allSections=true")
     token = base64.b64encode(f"{api_key}:".encode()).decode()
     req = request.Request(url, headers={"Authorization": f"Basic {token}"})
-    with request.urlopen(req, timeout=60) as r:
+    with request.urlopen(req, timeout=90) as r:
         payload = json.loads(r.read().decode())
     # MARS wraps rows under 'results' (v1.2). Be defensive about shape.
     if isinstance(payload, dict):
@@ -404,7 +405,15 @@ def main():
     if key:
         try:
             records = fetch_live(key)
+            print(f"LIVE fetch: {len(records)} raw records returned.")
+            if records:
+                _keys = list(records[0].keys())
+                print("RECORD KEYS:", _keys)
+                for _r in records[:4]:
+                    print("SAMPLE ROW:", {k: _r.get(k) for k in _keys})
             series = parse_live_records(records)
+            for _k, _v in series.items():
+                print(f"  mapped {_k}: {len(_v)} points")
             # If parsing produced too-thin series, fall back to demo but warn.
             good = sum(1 for v in series.values() if len(v) >= 45)
             if good == 0:
