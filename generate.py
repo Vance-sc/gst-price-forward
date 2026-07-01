@@ -116,26 +116,39 @@ def fetch_live(api_key):
     dr = f"{begin:%m/%d/%Y}:{end:%m/%d/%Y}"
     all_rows = []
     for sec in PRICE_SECTIONS:
-        url = (API_BASE + MARS_REPORT_ID + "/" + parse.quote(sec)
-               + "?q=report_begin_date=" + parse.quote(dr, safe="/:"))
-        try:
-            with request.urlopen(request.Request(url), timeout=120) as r:
-                raw = r.read().decode()
-            payload = json.loads(raw)
-            rows = _extract_rows(payload)
-            if rows:
-                print(f"SECTION '{sec}': {len(rows)} rows; "
-                      f"keys={list(rows[0].keys())}")
-                print("  SAMPLE:", {k: rows[0].get(k) for k in rows[0].keys()})
-                for row in rows:
-                    row["_section"] = sec
-                all_rows.extend(rows)
-            else:
-                print(f"SECTION '{sec}': 0 rows head={raw[:140]!r}")
-        except error.HTTPError as e:
-            print(f"SECTION '{sec}': HTTP {e.code}")
-        except Exception as ex:
-            print(f"SECTION '{sec}': ERR {ex}")
+        secenc = parse.quote(sec)
+        # try a plain pull and a report_date range; take whichever returns data
+        variants = [
+            ("plain", API_BASE + MARS_REPORT_ID + "/" + secenc),
+            ("report_date range", API_BASE + MARS_REPORT_ID + "/" + secenc
+                + "?q=report_date=" + parse.quote(dr, safe="/:")),
+        ]
+        got = None
+        for tag, url in variants:
+            try:
+                with request.urlopen(request.Request(url), timeout=120) as r:
+                    raw = r.read().decode()
+                payload = json.loads(raw)
+                rows = _extract_rows(payload)
+                if rows:
+                    dates = sorted({str(x.get("report_date")) for x in rows
+                                    if x.get("report_date")})
+                    print(f"SECTION '{sec}' [{tag}]: {len(rows)} rows, "
+                          f"{len(dates)} dates {dates[:1]}..{dates[-1:]} ")
+                    print("  KEYS:", list(rows[0].keys()))
+                    print("  SAMPLE:", {k: rows[0].get(k) for k in rows[0].keys()})
+                    got = rows
+                    break
+                else:
+                    print(f"SECTION '{sec}' [{tag}]: 0 rows head={raw[:120]!r}")
+            except error.HTTPError as e:
+                print(f"SECTION '{sec}' [{tag}]: HTTP {e.code}")
+            except Exception as ex:
+                print(f"SECTION '{sec}' [{tag}]: ERR {ex}")
+        if got:
+            for row in got:
+                row["_section"] = sec
+            all_rows.extend(got)
     print(f"TOTAL price rows: {len(all_rows)}")
     return all_rows
 
