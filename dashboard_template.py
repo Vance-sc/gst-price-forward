@@ -119,28 +119,29 @@ HTML = r"""<!DOCTYPE html>
   <div class="grid" id="grid"></div>
 
   <details class="method">
-    <summary>How the score works (and what it can't do)</summary>
-    <p><b>The Lock Score (0-100)</b> blends three signals. Above ~62 leans LOCK,
-    45-62 is SPLIT, below 45 is HOLD. Each product tracks <b>one exact USDA
+    <summary>How the v2 score works (and what it can't do)</summary>
+    <p><b>The Lock Score (0-100)</b> blends four signals, each measured against
+    its own trailing 250-day history. Each product tracks <b>one exact USDA
     item and grade</b> (shown on its card) — no averaging across cuts or grades.</p>
     <ul>
-      <li><b>Momentum (45%)</b> — short vs long moving average plus recent rate
-      of change, with windows sized to the horizon (30d and 60d use different
-      lookbacks). Rising = favors locking.</li>
-      <li><b>Seasonality (35%)</b> — how this calendar window has moved in each
-      prior year, averaged as per-year percent changes (so cheap years and
-      expensive years count equally).</li>
-      <li><b>Range position (20%)</b> — where today sits in its recent range.
-      Low = more room to rise. This is a mean-reversion bet that can fight
-      momentum in a sustained trend, which is why it gets the least weight.</li>
+      <li><b>Relative value (40%)</b> — this cut's price relative to the Choice
+      cutout, vs its own norm. Cheap vs the cutout = high score. The strongest
+      validated signal for every product.</li>
+      <li><b>Momentum (25%, contrarian)</b> — these cuts mean-revert over 30-60
+      days, so a recent run-up LOWERS the score and a dip raises it. (A v1
+      trend-following version backtested inverted and was replaced.)</li>
+      <li><b>Volume (20%)</b> — heavier-than-usual negotiated volume has
+      preceded price strength, especially for chuck roll and knuckle.</li>
+      <li><b>Choice/Select spread (15%)</b> — an unusually wide quality spread
+      has preceded softness.</li>
     </ul>
-    <p><b>What this is not:</b> a forecast. It measures pressure and calendar
-    tendency, not the future. Cattle supply shocks, packer margins, and demand
-    swings can override any of this. The weights and thresholds are heuristics
-    and have <b>not yet been validated by backtest</b> — treat the score as one
-    input to a Cargill / Zant lock conversation, alongside your read of the
-    market. Confidence flags "Low" when the signals disagree or volatility is
-    high.</p>
+    <p><b>Validation:</b> weights and thresholds were calibrated on 2019-2023
+    and tested out-of-sample on 2024-2026 (walk-forward, no lookahead). Pooled
+    test results: 30-day LOCK days preceded +2.4% average moves vs −0.7% on
+    HOLD days; 60-day LOCK +4.6% vs HOLD −2.6%. Each card shows the validated
+    hit rate for its current bucket — that figure, not the score itself, is
+    the confidence measure. Past behavior is no guarantee; supply shocks and
+    demand swings can override any signal.</p>
     <p><b>Basis note:</b> USDA quotes are the packer&rarr;wholesale price. Your
     vendor cost tracks them with a lag and a spread, so read the <i>direction</i>,
     not the dollar figure, as your cost signal.</p>
@@ -186,18 +187,24 @@ const order = Object.keys(D.products);
 function bar(v,label){
   return '<div class="bar" role="img" aria-label="'+label+' '+v+' of 100"><i></i><b style="width:'+v+'%;background:'+compColor(v)+'"></b></div>';
 }
+const sigColor = s => s==='LOCK'?'var(--red)': s==='SPLIT'?'var(--amber)':'var(--green)';
 function hz(h,d){
   const c=d.components;
+  const v=d.validation;
+  const vline = v ? '<div class="conf">Out-of-sample ’24-’26: this bucket averaged <b>'+
+    (v.mean>=0?'+':'')+v.mean+'%</b> fwd, price rose '+Math.round(v.hit*100)+'% of days (n='+v.n+')</div>' : '';
   return '<div class="hz">'+
     '<div class="hz-ttl">'+h+'-Day Outlook</div>'+
-    '<div class="hz-sig"><span class="score" style="color:'+compColor(d.score)+'">'+d.score+'</span>'+
+    '<div class="hz-sig"><span class="score" style="color:'+sigColor(d.signal)+'">'+d.score+'</span>'+
        '<span class="pill b-'+d.signal+'">'+d.signal+'</span></div>'+
     '<div class="hz-msg">'+esc(d.message)+'</div>'+
-    '<div class="conf">Confidence: <b>'+esc(d.confidence)+'</b></div>'+
+    '<div class="conf">Confidence: <b>'+esc(d.confidence)+'</b> (validated hit rate)</div>'+
+    vline+
     '<div class="comp">'+
-      '<div class="comprow"><span class="lbl">Momentum</span>'+bar(c.momentum,'Momentum')+'<span class="val">'+c.momentum+'</span></div>'+
-      '<div class="comprow"><span class="lbl">Seasonality</span>'+bar(c.seasonality,'Seasonality')+'<span class="val">'+c.seasonality+'</span></div>'+
-      '<div class="comprow"><span class="lbl">Range room</span>'+bar(c.range,'Range room')+'<span class="val">'+c.range+'</span></div>'+
+      '<div class="comprow"><span class="lbl">Rel value</span>'+bar(c.rel_value,'Relative value')+'<span class="val">'+c.rel_value+'</span></div>'+
+      '<div class="comprow"><span class="lbl">Momentum&#8224;</span>'+bar(c.momentum,'Contrarian momentum')+'<span class="val">'+c.momentum+'</span></div>'+
+      '<div class="comprow"><span class="lbl">Volume</span>'+bar(c.volume,'Volume trend')+'<span class="val">'+c.volume+'</span></div>'+
+      '<div class="comprow"><span class="lbl">C/S sprd</span>'+bar(c.cs_spread,'Choice-Select spread')+'<span class="val">'+c.cs_spread+'</span></div>'+
     '</div></div>';
 }
 
@@ -215,7 +222,6 @@ order.forEach((key,idx)=>{
       '<span><b>'+g.lbs.toLocaleString()+' lbs/yr</b>'+(hasMoney? ' · '+money(g.sales)+' sales · '+g.gp_pct+'% GP':'')+'</span>'+
       (hasMoney && p.exposure_5pct!=null? '<span class="exp">±5% cost ≈ '+money(p.exposure_5pct)+'/yr at stake</span>':'')+
     '</div>' : '';
-  const rd = h30.range_detail||{}, md = h30.momentum_detail||{};
   const el=document.createElement('div'); el.className='card';
   el.innerHTML =
     '<div class="card-h">'+
@@ -227,9 +233,9 @@ order.forEach((key,idx)=>{
     gstbar+
     '<div class="horizons">'+hz(30,h30)+hz(60,h60)+'</div>'+
     '<div class="chartbox"><canvas id="c'+idx+'" role="img" aria-label="Price history chart for '+esc(p.name)+'"></canvas></div>'+
-    '<div class="meta"><span>Range ('+(rd.lookback_obs||'—')+' obs): '+fmt(rd.low)+' – '+fmt(rd.high)+
-      (rd.range_pctile!=null? '  ·  now at '+rd.range_pctile+'% of range':'')+'</span>'+
-      '<span>SMA'+(md.sma_short!=null?'10 '+fmt(md.sma_short)+' vs SMA40 '+fmt(md.sma_long):' —')+'</span></div>';
+    '<div class="meta"><span>Vs cutout: '+(p.rv_pct>=0?'+':'')+p.rv_pct+'% against its 250-day norm'+
+      (p.rv_pct>1.5?' (rich)':p.rv_pct<-1.5?' (cheap)':'')+'</span>'+
+      '<span>&#8224; momentum is contrarian &middot; engine v2</span></div>';
   grid.appendChild(el);
 
   // chart: show last ~180 pts
@@ -261,8 +267,8 @@ order.forEach((key,idx)=>{
 document.getElementById('foot').innerHTML =
   'Data: USDA Agricultural Marketing Service, Livestock Market News '+
   '(report LM_XB403, LMR DataMart). Decision-support tool — not a price '+
-  'forecast or financial advice. Signal weights are unvalidated heuristics '+
-  '(see backtest.py). Built for GST Meat Co.';
+  'forecast or financial advice. v2 signal validated out-of-sample 2024-26; '+
+  'past behavior is no guarantee (see backtest.py). Built for GST Meat Co.';
 </script>
 </body>
 </html>

@@ -27,21 +27,27 @@ note USDA uses double spaces before the trailing spec number.
 
 ## What it is (and isn't)
 
-The 0–100 **Lock Score** blends three signals:
+The 0–100 **Lock Score (v2)** blends four signals, each z-scored against its
+own trailing 250 observations:
 
-1. **Momentum (45%)** — short vs long moving average + rate of change, with
-   lookbacks sized to the horizon (30d and 60d are computed differently).
-2. **Seasonality (35%)** — per-year percent moves for this calendar window,
-   averaged across years (cheap years and expensive years count equally).
-3. **Range position (20%)** — where today sits in its recent range. This is
-   a mean-reversion bet that can fight momentum in trends — hence the
-   lowest weight.
+1. **Relative value (40%)** — cut price ÷ Choice cutout vs its own norm.
+   Cheap vs the cutout = high score. The strongest validated signal.
+2. **Momentum (25%, contrarian)** — these cuts mean-revert over 30–60 days,
+   so run-ups lower the score, dips raise it. (The v1 trend-following
+   version backtested *inverted* and was replaced — don't restore it.)
+3. **Volume (20%)** — heavier-than-usual negotiated volume has preceded
+   price strength.
+4. **Choice/Select spread (15%)** — an unusually wide spread has preceded
+   softness.
 
-**It is not a forecast.** Cattle supply, packer margins, and demand shocks
-can override any signal. The weights and LOCK/HOLD thresholds are heuristics
-that have **not been validated** — run `python backtest.py` (see below) and
-recalibrate before leaning on them. The dashboard shows a **Confidence**
-flag (Low when signals disagree or volatility is high).
+**Validation:** weights/thresholds calibrated on 2019–2023, tested
+out-of-sample on 2024–2026 (walk-forward, no lookahead). Pooled test: 30d
+LOCK days +2.36% avg forward move vs HOLD −0.73%; 60d LOCK +4.59% vs HOLD
+−2.62%. Each card shows the validated hit rate for its bucket — that is the
+Confidence figure. **It is still not a forecast**: supply shocks, packer
+margins, and demand swings can override any signal. Re-run
+`python backtest.py` after any model change and update `VALIDATION` in
+`generate.py`; if the pooled test fails, don't ship the change.
 
 **Basis note:** USDA quotes are the *packer→wholesale* price. Your vendor
 cost tracks them with a lag and a spread — read the **direction**, not the
