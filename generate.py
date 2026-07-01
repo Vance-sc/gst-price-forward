@@ -87,115 +87,64 @@ PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
 # ---------------------------------------------------------------------------
 # DATA FETCH — live
 # ---------------------------------------------------------------------------
-def fetch_live(api_key):
-    """Pull a date-ranged slice of the daily boxed beef report from MARS.
-
-    MARS uses HTTP Basic auth: username = API key, password = blank.
-    Returns list of raw record dicts (as returned under 'results').
-    """
-    end = dt.date.today()
-    begin = end - dt.timedelta(days=HISTORY_DAYS)
-    q = f"report_begin_date={begin:%m/%d/%Y}:{end:%m/%d/%Y}"
-    url = (API_BASE + MARS_REPORT_ID + "?q=" + parse.quote(q, safe="=/:"))
-    # The LMR DataMart is typically open; try without auth, then with the key.
-    last_err = None
-    for use_auth in (False, True):
-        headers = {}
-        if use_auth and api_key:
-            token = base64.b64encode(f"{api_key}:".encode()).decode()
-            headers["Authorization"] = f"Basic {token}"
-        try:
-            req = request.Request(url, headers=headers)
-            with request.urlopen(req, timeout=90) as r:
-                payload = json.loads(r.read().decode())
-            if isinstance(payload, dict):
-                print("PAYLOAD KEYS:", list(payload.keys()))
-                for _k in list(payload.keys())[:15]:
-                    _v = payload[_k]
-                    _ln = len(_v) if hasattr(_v, "__len__") else "-"
-                    print(f"  payload[{_k!r}] type={type(_v).__name__} len={_ln}")
-                res = payload.get("results")
-                if res is None:
-                    res = payload.get("Results") or []
-                return res
-            print("PAYLOAD is", type(payload).__name__, "len",
-                  len(payload) if hasattr(payload, "__len__") else "-")
-            return payload or []
-        except error.HTTPError as e:
-            last_err = e
-            if e.code in (401, 403) and not use_auth:
-                continue  # retry with auth
-            raise
-    if last_err:
-        raise last_err
+def _extract_rows(payload):
+    """Normalize a MARS/DataMart payload into a list of dict rows."""
+    if isinstance(payload, dict):
+        for k in ("results", "Results", "report", "data"):
+            v = payload.get(k)
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                return v
+        # dict of sections -> flatten lists of dicts
+        rows = []
+        for v in payload.values():
+            if isinstance(v, list):
+                rows.extend([x for x in v if isinstance(x, dict)])
+        return rows
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
     return []
 
 
-def _http_get(url, api_key, timeout=60):
-    """GET with MARS basic auth. Returns (status_code, text). Never raises."""
-    token = base64.b64encode(f"{api_key}:".encode()).decode()
-    req = request.Request(url, headers={"Authorization": f"Basic {token}"})
-    try:
-        with request.urlopen(req, timeout=timeout) as r:
-            return getattr(r, "status", 200), r.read().decode()
-    except error.HTTPError as e:
-        try:
-            body = e.read().decode()[:300]
-        except Exception:
-            body = ""
-        return e.code, body
-    except Exception as e:  # URLError etc.
-        return None, str(e)
-
-
-REPORTS_ROOT = "https://marsapi.ams.usda.gov/services/v1.2/reports"
-
-
-def diagnose_and_resolve(api_key):
-    """Print URL-variant statuses and search the report index for the boxed
-    beef daily cutout report. Returns a working slug_id/name or None.
-    """
-    print("=== MARS diagnostic ===")
-    for label, url in [
-        ("slug-name no-query", f"{REPORTS_ROOT}/LM_XB403"),
-        ("slug-id 2453 no-query", f"{REPORTS_ROOT}/2453"),
-        ("root reports (TOC)", REPORTS_ROOT),
-    ]:
-        code, body = _http_get(url, api_key)
-        print(f"  [{label}] HTTP {code}  {str(body)[:120]!r}")
-    # search TOC for boxed beef
-    code, body = _http_get(REPORTS_ROOT, api_key)
-    if code == 200:
-        try:
-            data = json.loads(body)
-            rows = data.get("results", data) if isinstance(data, dict) else data
-            hits = []
-            beefs = []
-            for r in rows:
-                title = str(r.get("report_title", "") or r.get("report_name", ""))
-                sn = str(r.get("slug_name", ""))
-                low = title.lower()
-                if "beef" in low:
-                    beefs.append((r.get("slug_id"), sn, title))
-                if "boxed beef" in low and "cut" in low:
-                    hits.append((r.get("slug_id"), sn, title))
-            print(f"  TOC beef reports ({len(beefs)}):")
-            for h in beefs:
-                print("    beef->", h)
-            print(f"  TOC boxed-beef-cut matches ({len(hits)}):")
-            for h in hits:
-                print("    hit->", h)
-            # prefer the Afternoon/PM boxed beef cutout report
-            for sid, sn, title in hits:
-                if "afternoon" in title.lower() or " pm" in title.lower():
-                    print(f"  -> chose slug_id={sid} ({title})")
-                    return sid
-            if hits:
-                print(f"  -> chose slug_id={hits[0][0]} ({hits[0][2]})")
-                return hits[0][0]
-        except Exception as e:
-            print("  TOC parse error:", e)
-    return None
+def fetch_live(api_key):
+    """Pull boxed-beef rows from the LMR DataMart. Tries a few URL/auth
+    combinations and logs raw response heads so the exact shape is visible."""
+    end = dt.date.today()
+    begin = end - dt.timedelta(days=HISTORY_DAYS)
+    base = API_BASE + MARS_REPORT_ID
+    dr = f"{begin:%m/%d/%Y}:{end:%m/%d/%Y}"
+    url_candidates = [
+        base,                                              # latest snapshot
+        base + "?q=report_begin_date=" + parse.quote(dr, safe="/:"),
+        base + "/Current+Cutout+Values",                   # a named section
+    ]
+    for url in url_candidates:
+        for use_auth in (False, True):
+            headers = {}
+            if use_auth and api_key:
+                headers["Authorization"] = ("Basic " +
+                    base64.b64encode(f"{api_key}:".encode()).decode())
+            try:
+                req = request.Request(url, headers=headers)
+                with request.urlopen(req, timeout=90) as r:
+                    raw = r.read().decode()
+                print(f"TRY {url[:95]} auth={use_auth} -> {len(raw)}b "
+                      f"head={raw[:200]!r}")
+                try:
+                    payload = json.loads(raw)
+                except ValueError:
+                    continue
+                rows = _extract_rows(payload)
+                if rows:
+                    print(f"  -> extracted {len(rows)} dict rows; "
+                          f"keys={list(rows[0].keys())}")
+                    return rows
+            except error.HTTPError as e:
+                print(f"TRY {url[:95]} auth={use_auth} -> HTTP {e.code}")
+                continue
+            except Exception as ex:
+                print(f"TRY {url[:95]} auth={use_auth} -> ERR {ex}")
+                continue
+    return []
 
 
 def _num(v):
