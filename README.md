@@ -16,12 +16,16 @@ grade** (no averaging across cuts or grades):
 | Diesmillo | `Chuck, roll, lxl, neck/off (116A  3)` | Choice |
 | Fajita de Res | `Loin, bottom sirloin, flap (185A  4)` | Choice |
 | Espaldia | `Chuck, shoulder clod, trmd (114A  3)` | Choice |
-| Costilla | `Short Plate, short rib (123A  3)` | Choice |
+| Costilla | `Chuck, short rib (130  4)` | Choice |
 | Milanesa | `Round, knuckle, peeled (167A  4)` | Choice |
 
 To remap a product, replace its `item` string in `PRODUCTS` (in
 `generate.py`) with another **verbatim** `item_description` from the API —
-note USDA uses double spaces before the trailing spec number.
+note USDA uses double spaces before the trailing spec number. Costilla was
+verified against 2026-Q2 vendor invoices (Zant "CHUCK SHORT RIBS 5-BONE"):
+GST buys chuck 130s, and paid prices correlate negatively with plate 123A —
+don't switch it back without invoice evidence. After any remap, re-run
+`python backtest.py` and refresh `VALIDATION`.
 
 ---
 

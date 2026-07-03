@@ -32,7 +32,8 @@ FIX = [
     row("Choice Cuts", "07/01/2026", "Chuck, clod tender (114F  5)", "807.01", "18,834", "23"),    # wrong cut
     row("Choice Cuts", "07/01/2026", "Loin, bottom sirloin, flap (185A  4)", "946.89", "33,134", "18"),
     row("Choice Cuts", "07/01/2026", "Chuck, shoulder clod, trmd (114A  3)", "438.84", "91,896", "28"),
-    row("Choice Cuts", "07/01/2026", "Short Plate, short rib (123A  3)", "674.03", "28,170", "21"),
+    row("Choice Cuts", "07/01/2026", "Short Plate, short rib (123A  3)", "674.03", "28,170", "21"),  # wrong cut now
+    row("Choice Cuts", "07/01/2026", "Chuck, short rib (130  4)", "515.60", "51,656", "32"),
     row("Choice Cuts", "07/01/2026", "Round, knuckle, peeled (167A  4)", "464.40", "179,941", "32"),
     row("Choice Cuts", "06/30/2026", "Round, knuckle, peeled (167A  4)", "400.00", "100,000", "10"),
     row("Choice Cuts", "06/30/2026", "Round, knuckle, peeled (167A  4)", "500.00", "300,000", "30"),
@@ -59,7 +60,8 @@ check("regression: NOT the zero-polluted 237.6925",
       abs(series["chuck_roll"][0][1] - 237.6925) > 1)
 check("flap ignores 'Chuck, flap'", one("flap", 946.89, 33134))
 check("clod ignores clod tender", one("shoulder_clod", 438.84, 91896))
-check("costilla = plate 123A", one("short_rib", 674.03, 28170))
+check("costilla = chuck 130 (invoice-verified), plate 123A ignored",
+      one("short_rib", 515.60, 51656))
 check("knuckle latest = 464.40",
       series["round"][-1][0] == d and abs(series["round"][-1][1] - 464.40) < 1e-6)
 vw = series["round"][0]
@@ -137,7 +139,8 @@ v3_, conf3 = g.validation_for("shoulder_clod", 30, "LOCK")
 check("validation: clod 30d modest edge -> Medium",
       conf3 == "Medium", str(v3_))
 vp, _ = g.validation_for("nonexistent", 30, "SPLIT")
-check("validation: pooled fallback works", vp["n"] == 792, str(vp))
+check("validation: pooled fallback works",
+      vp["n"] == g.VALIDATION["pooled"][30]["SPLIT"]["n"], str(vp))
 # thresholds fall back to defaults when history is too thin
 th = g.pooled_thresholds({"x": g.build_features(flat_spike[:200], cut_flat)})
 check("pooled_thresholds: thin history -> defaults",
@@ -155,5 +158,4 @@ check("render injects APP_DATA", "window.APP_DATA" in html)
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURES: {FAILS}")
-    raise SystemExit(1)
-print("ALL TESTS PASSED")
+    rai

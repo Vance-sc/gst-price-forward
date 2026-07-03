@@ -77,14 +77,16 @@ PRODUCTS = [
      "item": "Chuck, shoulder clod, trmd (114A  3)",
      "section": "Choice Cuts",
      "spec": "USDA 114A · Choice"},
-    # Costilla = PLATE short rib (123A). The chuck-end alternative is
-    # "Chuck, short rib (130  4)" / "USDA 130 · Choice".
+    # Costilla = CHUCK short rib (130). Verified against GST invoices
+    # 2026-Q2: Zant sells GST "BEEF CHUCK SHORT RIBS 5-BONE" and Cargill
+    # "CHK B/I SHTRB"; paid prices correlate with USDA 130 and NEGATIVELY
+    # with plate 123A. Do not switch back to 123A without invoice evidence.
     {"key": "short_rib",
-     "name": "Costilla — Plate Short Rib",
+     "name": "Costilla — Chuck Short Rib (5-Bone)",
      "unit": "$/cwt",
-     "item": "Short Plate, short rib (123A  3)",
+     "item": "Chuck, short rib (130  4)",
      "section": "Choice Cuts",
-     "spec": "USDA 123A · Choice"},
+     "spec": "USDA 130 · Choice"},
     {"key": "round",
      "name": "Milanesa — Knuckle (Peeled)",
      "unit": "$/cwt",
@@ -133,48 +135,48 @@ DEFAULT_THRESHOLDS = {30: {"lock": 61.0, "hold": 40.0},
 # Regenerate via backtest.py after any model change.
 VALIDATION = {
     "pooled": {
-        30: {"LOCK": {"mean": 2.35, "hit": 0.63, "n": 577},
-             "SPLIT": {"mean": 0.85, "hit": 0.53, "n": 792},
-             "HOLD": {"mean": -1.07, "hit": 0.44, "n": 612}},
-        60: {"LOCK": {"mean": 3.94, "hit": 0.66, "n": 613},
-             "SPLIT": {"mean": 2.28, "hit": 0.57, "n": 738},
-             "HOLD": {"mean": -2.38, "hit": 0.40, "n": 610}},
+        30: {"LOCK": {"mean": 2.14, "hit": 0.64, "n": 581},
+             "SPLIT": {"mean": 0.88, "hit": 0.53, "n": 806},
+             "HOLD": {"mean": -0.94, "hit": 0.43, "n": 594}},
+        60: {"LOCK": {"mean": 4.18, "hit": 0.67, "n": 596},
+             "SPLIT": {"mean": 2.16, "hit": 0.58, "n": 771},
+             "HOLD": {"mean": -2.32, "hit": 0.38, "n": 594}},
     },
     "chuck_roll": {
-        30: {"LOCK": {"mean": 1.37, "hit": 0.59, "n": 140},
-             "SPLIT": {"mean": 1.17, "hit": 0.48, "n": 141},
+        30: {"LOCK": {"mean": 1.32, "hit": 0.59, "n": 145},
+             "SPLIT": {"mean": 1.21, "hit": 0.48, "n": 136},
              "HOLD": {"mean": -0.50, "hit": 0.47, "n": 116}},
-        60: {"LOCK": {"mean": 3.46, "hit": 0.65, "n": 150},
-             "SPLIT": {"mean": 4.30, "hit": 0.59, "n": 128},
-             "HOLD": {"mean": -3.85, "hit": 0.31, "n": 115}}},
+        60: {"LOCK": {"mean": 3.53, "hit": 0.65, "n": 147},
+             "SPLIT": {"mean": 4.07, "hit": 0.58, "n": 134},
+             "HOLD": {"mean": -3.90, "hit": 0.31, "n": 112}}},
     "flap": {
-        30: {"LOCK": {"mean": 3.06, "hit": 0.64, "n": 120},
-             "SPLIT": {"mean": 1.07, "hit": 0.60, "n": 149},
-             "HOLD": {"mean": -1.42, "hit": 0.46, "n": 126}},
-        60: {"LOCK": {"mean": 5.01, "hit": 0.67, "n": 126},
-             "SPLIT": {"mean": 3.04, "hit": 0.64, "n": 138},
-             "HOLD": {"mean": -3.29, "hit": 0.36, "n": 127}}},
+        30: {"LOCK": {"mean": 3.02, "hit": 0.65, "n": 125},
+             "SPLIT": {"mean": 1.05, "hit": 0.59, "n": 148},
+             "HOLD": {"mean": -1.52, "hit": 0.46, "n": 122}},
+        60: {"LOCK": {"mean": 5.01, "hit": 0.67, "n": 125},
+             "SPLIT": {"mean": 2.82, "hit": 0.63, "n": 142},
+             "HOLD": {"mean": -3.18, "hit": 0.36, "n": 124}}},
     "shoulder_clod": {
-        30: {"LOCK": {"mean": 1.32, "hit": 0.56, "n": 96},
-             "SPLIT": {"mean": 1.74, "hit": 0.55, "n": 181},
-             "HOLD": {"mean": -1.24, "hit": 0.39, "n": 119}},
-        60: {"LOCK": {"mean": 2.99, "hit": 0.58, "n": 106},
-             "SPLIT": {"mean": 2.60, "hit": 0.59, "n": 149},
-             "HOLD": {"mean": -0.94, "hit": 0.47, "n": 137}}},
-    "short_rib": {
-        30: {"LOCK": {"mean": 2.94, "hit": 0.64, "n": 129},
-             "SPLIT": {"mean": -0.40, "hit": 0.47, "n": 144},
-             "HOLD": {"mean": -1.77, "hit": 0.46, "n": 123}},
-        60: {"LOCK": {"mean": 2.51, "hit": 0.59, "n": 128},
-             "SPLIT": {"mean": 0.26, "hit": 0.50, "n": 158},
-             "HOLD": {"mean": -2.03, "hit": 0.47, "n": 106}}},
+        30: {"LOCK": {"mean": 1.26, "hit": 0.56, "n": 103},
+             "SPLIT": {"mean": 1.80, "hit": 0.55, "n": 174},
+             "HOLD": {"mean": -1.25, "hit": 0.39, "n": 119}},
+        60: {"LOCK": {"mean": 3.06, "hit": 0.59, "n": 104},
+             "SPLIT": {"mean": 2.56, "hit": 0.60, "n": 156},
+             "HOLD": {"mean": -1.08, "hit": 0.45, "n": 132}}},
+    "short_rib": {   # USDA 130 (chuck) — invoice-verified spec
+        30: {"LOCK": {"mean": 2.15, "hit": 0.65, "n": 113},
+             "SPLIT": {"mean": 0.02, "hit": 0.50, "n": 173},
+             "HOLD": {"mean": -1.08, "hit": 0.38, "n": 110}},
+        60: {"LOCK": {"mean": 3.59, "hit": 0.67, "n": 120},
+             "SPLIT": {"mean": -0.03, "hit": 0.51, "n": 169},
+             "HOLD": {"mean": -1.45, "hit": 0.39, "n": 103}}},
     "round": {
-        30: {"LOCK": {"mean": 3.15, "hit": 0.75, "n": 92},
-             "SPLIT": {"mean": 0.54, "hit": 0.55, "n": 177},
-             "HOLD": {"mean": -0.41, "hit": 0.45, "n": 128}},
-        60: {"LOCK": {"mean": 6.07, "hit": 0.80, "n": 103},
-             "SPLIT": {"mean": 1.72, "hit": 0.57, "n": 165},
-             "HOLD": {"mean": -1.99, "hit": 0.40, "n": 125}}},
+        30: {"LOCK": {"mean": 3.20, "hit": 0.75, "n": 95},
+             "SPLIT": {"mean": 0.42, "hit": 0.54, "n": 175},
+             "HOLD": {"mean": -0.36, "hit": 0.45, "n": 127}},
+        60: {"LOCK": {"mean": 5.97, "hit": 0.79, "n": 100},
+             "SPLIT": {"mean": 1.89, "hit": 0.58, "n": 170},
+             "HOLD": {"mean": -2.09, "hit": 0.39, "n": 123}}},
 }
 
 PUBLISH_POINTS = 270
@@ -318,7 +320,7 @@ def generate_demo():
         return math.sin((doy - 55) / 365 * 2 * math.pi)
 
     base_levels = {"chuck_roll": 480, "flap": 950, "shoulder_clod": 440,
-                   "short_rib": 675, "round": 465}
+                   "short_rib": 515, "round": 465}
     base_lbs = {"chuck_roll": 300000, "flap": 35000, "shoulder_clod": 90000,
                 "short_rib": 30000, "round": 150000}
     amp = {"chuck_roll": 35, "flap": 85, "shoulder_clod": 22,
