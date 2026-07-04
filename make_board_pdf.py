@@ -224,9 +224,12 @@ plt.close(fig)
 b64 = base64.b64encode(open(out_pdf, "rb").read()).decode()
 CHUNK = 60000
 for i in range(0, len(b64), CHUNK):
-    # .txt extension so GitHub Pages serves text/plain (fetchable as text)
+    chunk = b64[i:i + CHUNK]
+    # wrap at 76 chars/line (MIME style) and use a .txt extension so text
+    # fetchers can retrieve the parts; consumers strip whitespace and join
+    wrapped = "\n".join(chunk[j:j + 76] for j in range(0, len(chunk), 76))
     with open(os.path.join(HERE, f"board.pdf.b64.part{i // CHUNK:02d}.txt"),
               "w") as f:
-        f.write(b64[i:i + CHUNK])
+        f.write(wrapped + "\n")
 print(f"board.pdf: {os.path.getsize(out_pdf)} bytes, "
       f"{(len(b64) + CHUNK - 1) // CHUNK} b64 part(s)")
