@@ -46,7 +46,7 @@ jobs:
           cp index.html public/index.html
           cp data.json  public/data.json
           cp board.pdf  public/board.pdf
-          cp board.pdf.b64.part* public/
+          cp board_data.json public/board_data.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
