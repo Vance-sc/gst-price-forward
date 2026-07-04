@@ -39,10 +39,14 @@ jobs:
         env:
           PUBLIC_BUILD: "1"   # strip GST's confidential $/margin figures from the public site
         run: |
+          pip install matplotlib --quiet
           python generate.py
+          python make_board_pdf.py
           mkdir -p public
           cp index.html public/index.html
           cp data.json  public/data.json
+          cp board.pdf  public/board.pdf
+          cp board.pdf.b64.part* public/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
