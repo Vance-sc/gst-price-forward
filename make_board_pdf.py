@@ -5,15 +5,16 @@ mirrors the live dashboard: five product cards with signal pills, component
 bars, validation lines, and 180-day price charts. Runs in CI right after
 generate.py using the data.json it just wrote — no network needed here.
 
-Also writes board.pdf.b64.partNN files (60,000-char chunks of the base64)
-so downstream automations can retrieve the PDF through text-only fetchers.
+Also writes board_data.json — a slim (<80 KB) copy of the board's inputs —
+so downstream automations can fetch it as plain JSON and re-render this
+exact PDF locally:  python make_board_pdf.py board_data.json
 
 Requires matplotlib (CI installs it). Public data only — same rules as the
 dashboard: pounds OK, no dollars.
 """
 
+import sys
 import json
-import base64
 import os
 
 import matplotlib
@@ -26,7 +27,8 @@ INK, MUTED, BG, LINE = "#1b1b1b", "#666666", "#f6f5f2", "#e4e4e4"
 SIG = {"LOCK": RED, "SPLIT": AMBER, "HOLD": GREEN}
 
 HERE = os.path.dirname(__file__) or "."
-D = json.load(open(os.path.join(HERE, "data.json")))
+DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "data.json")
+D = json.load(open(DATA))
 META, PRODUCTS = D["meta"], D["products"]
 
 PAGE_W, PAGE_H = 8.5, 11.0
@@ -221,15 +223,14 @@ out_pdf = os.path.join(HERE, "board.pdf")
 fig.savefig(out_pdf, format="pdf", facecolor=BG)
 plt.close(fig)
 
-b64 = base64.b64encode(open(out_pdf, "rb").read()).decode()
-CHUNK = 60000
-for i in range(0, len(b64), CHUNK):
-    chunk = b64[i:i + CHUNK]
-    # wrap at 76 chars/line (MIME style) and use a .txt extension so text
-    # fetchers can retrieve the parts; consumers strip whitespace and join
-    wrapped = "\n".join(chunk[j:j + 76] for j in range(0, len(chunk), 76))
-    with open(os.path.join(HERE, f"board.pdf.b64.part{i // CHUNK:02d}.txt"),
-              "w") as f:
-        f.write(wrapped + "\n")
-print(f"board.pdf: {os.path.getsize(out_pdf)} bytes, "
-      f"{(len(b64) + CHUNK - 1) // CHUNK} b64 part(s)")
+# Slim data file (<80 KB) so downstream automations can fetch the board's
+# inputs as plain JSON and re-render this exact PDF locally.
+slim = {"meta": META, "products": {}}
+for k, p in PRODUCTS.items():
+    q = dict(p)
+    q["series"] = p["series"][-180:]
+    slim["products"][k] = q
+with open(os.path.join(HERE, "board_data.json"), "w") as f:
+    json.dump(slim, f, separators=(",", ":"))
+print(f"board.pdf: {os.path.getsize(out_pdf)} bytes; board_data.json: "
+      f"{os.path.getsize(os.path.join(HERE, 'board_data.json'))} bytes")
