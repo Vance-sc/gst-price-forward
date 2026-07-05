@@ -19,6 +19,10 @@ import os
 
 import matplotlib
 matplotlib.use("Agg")
+# Core-14 fonts keep the PDF small (~15 KB vs ~65 KB with embedded Type3
+# glyphs) so the weekly automation can move it as one base64 chunk.
+matplotlib.rcParams["pdf.use14corefonts"] = True
+matplotlib.rcParams["font.family"] = "Helvetica"
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
@@ -44,9 +48,15 @@ def sma(vals, n):
     return out
 
 
+ASCII = {"\u2014": "-", "\u00b7": "|", "\u2020": "+", "\u26a0": "!",
+         "\u2192": "->", "\u2019": "'", "\u2018": "'"}
+
+
 def text(x, y, s, size=8, color=INK, weight="normal", ha="left", va="top"):
+    for k, v in ASCII.items():
+        s = s.replace(k, v)
     fig.text(x, y, s, fontsize=size, color=color, fontweight=weight,
-             ha=ha, va=va, family="DejaVu Sans")
+             ha=ha, va=va)
 
 
 # ---------------- header ----------------
