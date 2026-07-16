@@ -171,8 +171,11 @@ def card(ix, key):
             bar(bx + 0.030, cy, CW / 2 - 0.075, val, bcol)
             text(bx + CW / 2 - 0.038, cy + 0.004, f"{val:.0f}", size=5.5,
                  color=MUTED)
-    # chart (bottom of the card)
+    # chart (bottom of the card) — decimate to <=60 points so the PDF
+    # stays ~12-15 KB; larger files corrupt when moved as inline base64
     s = p["series"][-180:]
+    step = max(1, len(s) // 60)
+    s = s[::step] if step > 1 else s
     prices = [pt[1] for pt in s]
     ax = fig.add_axes([x0 + 0.015, y0 + 0.012, CW - 0.03, 0.085])
     ax.set_zorder(5)   # figure patches default to zorder 1; axes default 0
