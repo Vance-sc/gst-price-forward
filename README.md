@@ -4,9 +4,13 @@ A daily dashboard that reads USDA boxed-beef prices and gives a
 **30- and 60-day "lock" signal** to help decide when to price-fix product with
 a vendor (Cargill, Zant, etc.).
 
-- **Red / LOCK** — market under upward pressure; locking looks favorable
+- **Green / LOCK** — market under upward pressure; locking looks favorable
 - **Amber / SPLIT** — mixed; consider locking part of the volume
-- **Green / HOLD** — soft or softening; little urgency to lock now
+- **Red / HOLD** — soft or softening; little urgency to lock now
+
+The site also deploys to the password-protected subdomain
+`board.gstmeat.com` (SiteGround; see the FTPS step in `update.yml` —
+requires `SG_FTP_HOST`/`SG_FTP_USER`/`SG_FTP_PASS` repo secrets).
 
 Each of GST's top 5 beef products is pinned to **one exact USDA item and
 grade** (no averaging across cuts or grades):
