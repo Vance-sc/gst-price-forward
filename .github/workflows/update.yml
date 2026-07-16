@@ -56,3 +56,25 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # Mirrors the same build to board.gstmeat.com (SiteGround hosting,
+      # password-protected via Site Tools > Protected URLs). Requires repo
+      # secrets SG_FTP_HOST / SG_FTP_USER / SG_FTP_PASS — the FTP account
+      # should be scoped to the subdomain's document root so the build
+      # lands at "/" and the credential can't touch the rest of the site.
+      # Skips quietly until the secrets exist.
+      - name: Deploy to board.gstmeat.com (SiteGround FTPS)
+        env:
+          FTP_HOST: ${{ secrets.SG_FTP_HOST }}
+          FTP_USER: ${{ secrets.SG_FTP_USER }}
+          FTP_PASS: ${{ secrets.SG_FTP_PASS }}
+        run: |
+          if [ -z "$FTP_HOST" ]; then
+            echo "SiteGround FTP secrets not configured — skipping subdomain deploy."
+            exit 0
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+          lftp -u "$FTP_USER","$FTP_PASS" \
+            -e "set ftp:ssl-force true; set ftp:ssl-protect-data true; \
+                mirror -R --delete --verbose public/ /; quit" \
+            "$FTP_HOST"
