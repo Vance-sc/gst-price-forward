@@ -34,6 +34,10 @@ HTML = r"""<!DOCTYPE html>
   h1{font-size:22px;margin:0;font-weight:700;letter-spacing:.3px}
   .sub{font-size:13px;color:var(--muted);font-weight:300;margin-top:2px}
   .gen{font-size:12px;color:var(--muted);text-align:right;font-weight:300}
+  .btn-pdf{display:inline-block;background:var(--green);color:#fff;font-weight:700;
+       font-size:13px;padding:9px 16px;border-radius:8px;text-decoration:none;
+       box-shadow:0 1px 3px rgba(0,0,0,.15);white-space:nowrap}
+  .btn-pdf:hover{background:#0d5f40;color:#fff}
   .demo{background:var(--amber);color:#fff;text-align:center;font-weight:700;
        padding:7px;font-size:14px;letter-spacing:.4px}
   .warn{background:#fdf3e3;border:1px solid var(--amber);color:#7a5410;
@@ -101,7 +105,10 @@ HTML = r"""<!DOCTYPE html>
         <div class="sub">GST's top 5 beef products &middot; USDA boxed-beef quotes &rarr; 30 / 60-day lock guidance</div>
       </div>
     </div>
-    <div class="gen" id="gen"></div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <a class="btn-pdf" href="board.pdf" download>Download PDF report</a>
+      <div class="gen" id="gen"></div>
+    </div>
   </div>
 </header>
 <div id="demoBanner"></div>
