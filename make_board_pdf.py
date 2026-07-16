@@ -28,7 +28,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 
 GREEN, RED, AMBER = "#117b53", "#a6152e", "#d68a12"
 INK, MUTED, BG, LINE = "#1b1b1b", "#666666", "#f6f5f2", "#e4e4e4"
-SIG = {"LOCK": RED, "SPLIT": AMBER, "HOLD": GREEN}
+SIG = {"LOCK": GREEN, "SPLIT": AMBER, "HOLD": RED}  # green = lock (favorable), red = hold off
 
 HERE = os.path.dirname(__file__) or "."
 DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "data.json")
@@ -167,7 +167,7 @@ def card(ix, key):
             cy = by - 0.055 - ci * 0.0085
             text(bx, cy + 0.004, lbl, size=5.5, color=MUTED)
             val = comp[ck]
-            bcol = RED if val >= 62 else AMBER if val >= 45 else GREEN
+            bcol = GREEN if val >= 62 else AMBER if val >= 45 else RED
             bar(bx + 0.030, cy, CW / 2 - 0.075, val, bcol)
             text(bx + CW / 2 - 0.038, cy + 0.004, f"{val:.0f}", size=5.5,
                  color=MUTED)

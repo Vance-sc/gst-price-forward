@@ -44,7 +44,7 @@ HTML = r"""<!DOCTYPE html>
   .pill{display:inline-flex;align-items:center;gap:7px;font-weight:700;
        font-size:12px;padding:4px 10px;border-radius:20px;color:#fff}
   .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-  .b-LOCK{background:var(--red)} .b-SPLIT{background:var(--amber)} .b-HOLD{background:var(--green)}
+  .b-LOCK{background:var(--green)} .b-SPLIT{background:var(--amber)} .b-HOLD{background:var(--red)}
   .legend-item{font-size:13px;color:#444;display:flex;align-items:center;gap:7px}
   .cutout{margin-left:auto;font-size:13px;color:#444;text-align:right}
   .cutout b{font-size:16px}
@@ -157,7 +157,7 @@ HTML = r"""<!DOCTYPE html>
 <script>
 const D = window.APP_DATA;
 const fmt = (n)=> n==null? '—' : n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-const compColor = (v)=> v>=62?'var(--red)': v>=45?'var(--amber)':'var(--green)';
+const compColor = (v)=> v>=62?'var(--green)': v>=45?'var(--amber)':'var(--red)';
 const esc = (s)=> String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 document.getElementById('gen').innerHTML =
@@ -190,7 +190,7 @@ const order = Object.keys(D.products);
 function bar(v,label){
   return '<div class="bar" role="img" aria-label="'+label+' '+v+' of 100"><i></i><b style="width:'+v+'%;background:'+compColor(v)+'"></b></div>';
 }
-const sigColor = s => s==='LOCK'?'var(--red)': s==='SPLIT'?'var(--amber)':'var(--green)';
+const sigColor = s => s==='LOCK'?'var(--green)': s==='SPLIT'?'var(--amber)':'var(--red)';
 function hz(h,d){
   const c=d.components;
   const v=d.validation;
