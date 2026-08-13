@@ -28,7 +28,9 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 
 GREEN, RED, AMBER = "#117b53", "#a6152e", "#d68a12"
 INK, MUTED, BG, LINE = "#1b1b1b", "#666666", "#f6f5f2", "#e4e4e4"
-SIG = {"LOCK": RED, "SPLIT": AMBER, "HOLD": GREEN}
+# Color semantics per July 2026 update (commit c6b1722): LOCK = green
+# (favorable — go fix a price), HOLD = red (stand down), SPLIT = amber.
+SIG = {"LOCK": GREEN, "SPLIT": AMBER, "HOLD": RED}
 
 HERE = os.path.dirname(__file__) or "."
 DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "data.json")
@@ -167,7 +169,9 @@ def card(ix, key):
             cy = by - 0.055 - ci * 0.0085
             text(bx, cy + 0.004, lbl, size=5.5, color=MUTED)
             val = comp[ck]
-            bcol = RED if val >= 62 else AMBER if val >= 45 else GREEN
+            # high component value = favorable to lock = green (flipped
+            # with the July 2026 color swap to match the pill colors)
+            bcol = GREEN if val >= 62 else AMBER if val >= 45 else RED
             bar(bx + 0.030, cy, CW / 2 - 0.075, val, bcol)
             text(bx + CW / 2 - 0.038, cy + 0.004, f"{val:.0f}", size=5.5,
                  color=MUTED)
@@ -220,18 +224,6 @@ text(lx + 0.012, ly1 - 0.095,
      "hit rate shown per bucket IS the confidence figure.\n"
      "† these cuts mean-revert: dips raise the score.",
      size=6.5, color=MUTED)
-from matplotlib.lines import Line2D
-text(lx + 0.012, ly1 - 0.245, "Chart lines", size=7, weight="bold")
-for i, (lcol, lsty, lbl) in enumerate([
-        (INK, "-", "daily close"),
-        (RED, "--", "10-day avg"),
-        (GREEN, "-", "40-day avg")]):
-    sx = lx + 0.012 + i * 0.145
-    sy = ly1 - 0.262
-    fig.lines.append(Line2D([sx, sx + 0.030], [sy, sy],
-                            transform=fig.transFigure, color=lcol,
-                            linestyle=lsty, linewidth=1.2))
-    text(sx + 0.036, sy + 0.006, lbl, size=6.5, color=MUTED)
 text(lx + 0.012, ly1 - 0.20,
      "Decision support, not a forecast. USDA quotes are\n"
      "packer→wholesale; GST vendor cost follows with a lag\n"
