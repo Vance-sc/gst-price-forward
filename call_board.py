@@ -3,7 +3,7 @@
 original board, but leading with THE CALL per cut: the momentum lock rule
 (1-week move > +4% -> LOCK ~4 weeks) overriding the v2 30-day signal.
 Usage: python3 call_board.py board_data.json
-CALLBOARD_VERSION = 1
+CALLBOARD_VERSION = 3
 """
 
 import sys
@@ -51,6 +51,14 @@ def mom(series, i_end, look=5):
     a = series[i_end][1]
     b = series[i_end - look][1]
     return a / b - 1
+
+
+def sma(vals, n):
+    out = []
+    for i in range(len(vals)):
+        w = vals[max(0, i - n + 1):i + 1]
+        out.append(sum(w) / len(w) if i >= n - 1 else None)
+    return out
 
 
 def call_for(p):
@@ -175,12 +183,20 @@ def card(ix, key):
          f"vs cutout {'+' if (rv or 0) >= 0 else ''}{rv}%{rvtag} · "
          f"1d {'+' if p.get('change_1d', 0) >= 0 else ''}{p.get('change_1d', 0)}",
          size=6.3, color=MUTED)
+    if chg > 8:
+        text(x0 + 0.012, dy - 0.023,
+             f"⚠ up {chg}% in 30d — cap locks at ~4 wks; 60-day locks at "
+             f"these levels fixed tops (24% win)",
+             size=6.3, color=AMBER, weight="bold")
     # ---- chart ----
     s = p["series"][-180:]
     prices = [pt[1] for pt in s]
     ax = fig.add_axes([x0 + 0.015, y0 + 0.012, CW - 0.03, 0.115])
     ax.set_zorder(5)
     ax.plot(range(len(prices)), prices, color=INK, linewidth=0.8)
+    ax.plot(range(len(prices)), sma(prices, 10), color=RED, linewidth=0.6,
+            linestyle="--")
+    ax.plot(range(len(prices)), sma(prices, 40), color=GREEN, linewidth=0.6)
     # shade the current lock window origin if in a streak
     if c["call"] == "LOCK" and c["streak_start"] is not None:
         dates = [pt[0] for pt in s]
@@ -228,6 +244,8 @@ text(lx + 0.012, ly1 - 0.095,
      "2) Otherwise the v2 30-day value signal is the call.",
      size=6.5, color=MUTED)
 text(lx + 0.012, ly1 - 0.215,
+     "Chart lines: daily close (black), 10-day avg (red\n"
+     "dashed), 40-day avg (green).\n"
      "Tenor cap: when a cut is up >8% over 30 days, never\n"
      "extend locks past ~4 weeks — 60-day locks at such\n"
      "levels historically fixed tops (chuck: 24% win rate).\n"
