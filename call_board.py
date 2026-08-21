@@ -3,7 +3,7 @@
 original board, but leading with THE CALL per cut: the momentum lock rule
 (1-week move > +4% -> LOCK ~4 weeks) overriding the v2 30-day signal.
 Usage: python3 call_board.py board_data.json
-CALLBOARD_VERSION = 4
+CALLBOARD_VERSION = 5
 """
 
 import sys
@@ -268,9 +268,24 @@ text(lx + 0.012, ly1 - 0.095,
      "a coin flip. Green shading on charts = current streak.\n"
      "2) Otherwise the v2 30-day value signal is the call.",
      size=6.5, color=MUTED)
-text(lx + 0.012, ly1 - 0.215,
-     "Chart lines: daily close (black), 10-day avg (red\n"
-     "dashed), 40-day avg (green).\n"
+from matplotlib.lines import Line2D
+text(lx + 0.012, ly1 - 0.180, "Chart lines", size=7.5, weight="bold")
+for i, (lcol, lsty, lbl) in enumerate([
+        (INK, "-", "daily close"),
+        (RED, "--", "10-day avg"),
+        (GREEN, "-", "40-day avg")]):
+    sx = lx + 0.012 + i * 0.145
+    sy = ly1 - 0.198
+    fig.lines.append(Line2D([sx, sx + 0.030], [sy, sy],
+                            transform=fig.transFigure, color=lcol,
+                            linestyle=lsty, linewidth=1.2))
+    text(sx + 0.036, sy + 0.006, lbl, size=6.5, color=MUTED)
+fig.patches.append(Rectangle((lx + 0.012, ly1 - 0.220), 0.030, 0.010,
+                             transform=fig.transFigure, facecolor=GREEN,
+                             alpha=0.15, edgecolor="none"))
+text(lx + 0.048, ly1 - 0.209, "green shading = current lock streak",
+     size=6.5, color=MUTED)
+text(lx + 0.012, ly1 - 0.234,
      "Tenor notes on cards show each cut's OWN 60-day-lock\n"
      "win rate during >8%/30d rallies ('16-'26): chuck 37%\n"
      "and clod 38% mean-revert (cap at 4 wks); knuckle 46%\n"
