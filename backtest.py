@@ -10,17 +10,17 @@ Procedure (matches production exactly):
   * v2 features are built from trailing windows only -> lookahead-free.
   * At every decision day (every 5 trading days after a 520-obs warmup),
     LOCK/HOLD thresholds are recomputed as the 70th/30th percentile of ALL
-    pooled prior decision scores — never future ones. Scoring starts once
+    pooled prior decision scores â€” never future ones. Scoring starts once
     150 prior scores exist. Everything after that burn-in is genuine
     out-of-sample test data.
-  * Outcome: fwd% = (avg price over next horizon − spot) / spot.
+  * Outcome: fwd% = (avg price over next horizon âˆ’ spot) / spot.
     Positive = locking at ~spot beat floating.
 
 History deeper than ~8 years is fetched in two date-range chunks to stay
 under the DataMart's silent 100,000-row response cap.
 
 Prints per-product, per-era, and pooled stats. After any model change,
-paste the new per-bucket stats into VALIDATION in generate.py — and if the
+paste the new per-bucket stats into VALIDATION in generate.py â€” and if the
 pooled test fails the pass criterion, don't ship the change.
 """
 
@@ -89,7 +89,7 @@ def main():
     if args.demo:
         g.FETCH_YEARS = args.years
         series, cutout = g.generate_demo()
-        print("DEMO data — validates the harness, not the signal.\n")
+        print("DEMO data â€” validates the harness, not the signal.\n")
     else:
         series, cutout = fetch_history(args.years)
 
@@ -99,7 +99,7 @@ def main():
         key = prod["key"]
         pts = series.get(key, [])
         if len(pts) < 600:
-            print(f"{key}: only {len(pts)} points — skipped")
+            print(f"{key}: only {len(pts)} points â€” skipped")
             continue
         F = g.build_features(pts, cutout)
         for h in (30, 60):
@@ -123,5 +123,34 @@ def main():
             if len(pool) >= 150:
                 lock = pool[int(len(pool) * 0.7)]
                 hold = pool[int(len(pool) * 0.3)]
-                b = "LOCK" if sc >= lock else \
-                    "HOLD" 
+                b = ("LOCK" if sc >= lock else
+                     "HOLD" if sc <= hold else "SPLIT")
+                if first is None:
+                    first = date
+                get(key)[b].append(f)
+                get(key)["ALL"].append(f)
+                get("POOLED")[b].append(f)
+                get("POOLED")["ALL"].append(f)
+                get("ERA " + era_of(date))[b].append(f)
+            bisect.insort(pool, sc)
+
+        print(f"\n=== horizon {h}d (first scored day: {first}) ===")
+        results[h] = {"first_scored": str(first), "buckets": {}}
+        for k in sorted(buckets):
+            line = f"  {k:16s}"
+            for b in ("LOCK", "SPLIT", "HOLD"):
+                line += f" | {b} {fmt(stats(buckets[k][b]))}"
+            print(line)
+            results[h]["buckets"][k] = {
+                b: stats(buckets[k][b])
+                for b in ("LOCK", "SPLIT", "HOLD", "ALL")}
+
+    with open("backtest_results.json", "w") as fh:
+        json.dump(results, fh, indent=2, default=str)
+    print("\nwrote backtest_results.json")
+    print("Pass criterion: pooled LOCK mean must clearly beat pooled ALL "
+          "mean at both horizons; if not, don't ship the change.")
+
+
+if __name__ == "__main__":
+    main()
