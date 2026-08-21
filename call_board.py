@@ -3,7 +3,7 @@
 original board, but leading with THE CALL per cut: the momentum lock rule
 (1-week move > +4% -> LOCK ~4 weeks) overriding the v2 30-day signal.
 Usage: python3 call_board.py board_data.json
-CALLBOARD_VERSION = 3
+CALLBOARD_VERSION = 4
 """
 
 import sys
@@ -23,6 +23,18 @@ INK, MUTED, BG, LINE = "#1b1b1b", "#666666", "#f6f5f2", "#e4e4e4"
 SIG = {"LOCK": GREEN, "SPLIT": AMBER, "HOLD": RED}
 TRIG = 0.04          # 1-week momentum lock trigger
 LOCK_DAYS = 28       # lock tenor, calendar days
+
+# 60-day lock vs float on days with trailing-month rally > +8%, per cut:
+# (win_pct, n_days). Computed on 2016-2026 USDA history, daily samples with
+# overlapping forward windows (so effective n is smaller than shown).
+# Regenerate with study7.py (Temp\gst-bt) after model changes or ~quarterly.
+RALLY_STATS = {
+    "chuck_roll": (37, 650),
+    "flap": (52, 785),
+    "shoulder_clod": (38, 391),
+    "short_rib": (56, 427),
+    "round": (46, 508),
+}
 
 HERE = os.path.dirname(__file__) or "."
 DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "board_data.json")
@@ -184,10 +196,23 @@ def card(ix, key):
          f"1d {'+' if p.get('change_1d', 0) >= 0 else ''}{p.get('change_1d', 0)}",
          size=6.3, color=MUTED)
     if chg > 8:
-        text(x0 + 0.012, dy - 0.023,
-             f"⚠ up {chg}% in 30d — cap locks at ~4 wks; 60-day locks at "
-             f"these levels fixed tops (24% win)",
-             size=6.3, color=AMBER, weight="bold")
+        win, nn = RALLY_STATS.get(key, (None, 0))
+        if win is None:
+            wtxt, wcol, wwt = (f"⚠ up {chg}% in 30d — cap locks at ~4 wks",
+                               AMBER, "bold")
+        elif win < 45:
+            wtxt, wcol, wwt = (f"⚠ up {chg}% in 30d — cap locks at ~4 wks; "
+                               f"60-day locks here won only {win}% ('16-'26, n={nn})",
+                               AMBER, "bold")
+        elif win <= 55:
+            wtxt, wcol, wwt = (f"up {chg}% in 30d — 60-day locks here are a "
+                               f"coin flip ({win}%): no edge extending past 4 wks",
+                               MUTED, "normal")
+        else:
+            wtxt, wcol, wwt = (f"up {chg}% in 30d — this cut's rallies tend to "
+                               f"persist ({win}% 60-day lock win): extension defensible",
+                               MUTED, "normal")
+        text(x0 + 0.012, dy - 0.023, wtxt, size=6.3, color=wcol, weight=wwt)
     # ---- chart ----
     s = p["series"][-180:]
     prices = [pt[1] for pt in s]
@@ -246,9 +271,10 @@ text(lx + 0.012, ly1 - 0.095,
 text(lx + 0.012, ly1 - 0.215,
      "Chart lines: daily close (black), 10-day avg (red\n"
      "dashed), 40-day avg (green).\n"
-     "Tenor cap: when a cut is up >8% over 30 days, never\n"
-     "extend locks past ~4 weeks — 60-day locks at such\n"
-     "levels historically fixed tops (chuck: 24% win rate).\n"
+     "Tenor notes on cards show each cut's OWN 60-day-lock\n"
+     "win rate during >8%/30d rallies ('16-'26): chuck 37%\n"
+     "and clod 38% mean-revert (cap at 4 wks); knuckle 46%\n"
+     "and flap 52% are coin flips; short rib 56% persists.\n"
      "USDA is packer→wholesale; vendor cost lags ~3-9 days.\n"
      "Decision support, not a forecast.",
      size=6.5, color=MUTED)
