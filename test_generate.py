@@ -158,4 +158,5 @@ check("render injects APP_DATA", "window.APP_DATA" in html)
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURES: {FAILS}")
-    rai
+    raise SystemExit(1)
+print(f"All checks passed.")

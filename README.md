@@ -8,6 +8,15 @@ a vendor (Cargill, Zant, etc.).
 - **Amber / SPLIT** — mixed; consider locking part of the volume
 - **Red / HOLD** — soft or softening; little urgency to lock now
 
+## Official call (one rule)
+
+**Production = Lock Score v2** from `generate.py`: the live dashboard,
+`data.json`, and `board.pdf` (`make_board_pdf.py`). Green LOCK / Amber SPLIT /
+Red HOLD for 30- and 60-day horizons.
+
+`call_board.py` is **experimental / local only** (momentum override). It is
+not run in CI and is not the vendor call — do not treat it as the daily board.
+
 The site also deploys to the password-protected subdomain
 `board.gstmeat.com` (SiteGround; see the FTPS step in `update.yml` —
 requires `SG_FTP_HOST`/`SG_FTP_USER`/`SG_FTP_PASS` repo secrets).
@@ -105,14 +114,16 @@ build time, and displays a warning if data is more than 4 business days old.
 
 | File | Purpose |
 |------|---------|
-| `generate.py` | Fetches USDA data, computes signals, writes `index.html` + `data.json` |
+| `generate.py` | Fetches USDA data, computes **official v2** signals, writes `index.html` + `data.json` |
 | `dashboard_template.py` | The dashboard HTML/CSS/JS template |
+| `make_board_pdf.py` | Official one-page PDF (`board.pdf`) — same v2 calls as the dashboard |
+| `call_board.py` | **Experimental / local only** — momentum override PDF; not CI |
 | `backtest.py` | Walk-forward backtest of the Lock Score (run locally) |
-| `.github/workflows/update.yml` | Auto-runs each weekday, publishes to GitHub Pages |
+| `.github/workflows/update.yml` | Weekday CI → GitHub Pages (+ optional SiteGround FTPS) |
 | `gst_private.py` | **Local only, gitignored** — confidential sales/margin/cost overlay |
 
-No third-party Python packages — standard library only. Charts use Chart.js
-from a CDN.
+`generate.py` is standard-library only. PDF scripts need `matplotlib` (CI
+installs it). Charts on the HTML board use Chart.js from a CDN.
 
 ---
 
@@ -153,10 +164,28 @@ thresholds in `generate.py`, or treat the board as a price monitor.
    weekday at 22:00 UTC (after the PM report). No secrets are required —
    if a `USDA_API_KEY` secret exists from an earlier version, delete it.
 
-### Custom subdomain (optional)
+### Custom subdomain / `board.gstmeat.com` (SiteGround)
 
-**Settings → Pages → Custom domain** (e.g. `pricing.gstmeat.com`), then add
-the CNAME record GitHub shows you at your DNS registrar.
+Preferred staff URL: password-protected `board.gstmeat.com` (SiteGround),
+mirrored from the same CI build as GitHub Pages.
+
+1. **DNS** — point `board.gstmeat.com` at SiteGround (already on gstmeat.com).
+2. **FTP account** — Site Tools → FTP Accounts: create a user whose home is
+   *only* the `board.gstmeat.com` document root (not the whole site).
+3. **GitHub repo secrets** (Settings → Secrets and variables → Actions):
+   - `SG_FTP_HOST` — SiteGround FTP hostname
+   - `SG_FTP_USER` / `SG_FTP_PASS` — that scoped account
+   Until these exist, the FTPS step skips (Pages still publishes).
+4. **Password** — Site Tools → Security → Protected URLs: protect
+   `board.gstmeat.com` (or `/`) with a username/password for staff. HTTP
+   basic auth is SiteGround-side; GitHub cannot set it for you.
+5. Re-run **Update forward-buy dashboard** (or wait for the weekday cron).
+
+GitHub Pages custom domain (optional alternative): **Settings → Pages →
+Custom domain**, then add the CNAME GitHub shows at your DNS registrar.
+
+`PUBLIC_BUILD=1` refuses DEMO mode so a bad USDA fetch fails the job instead
+of publishing sample LOCK/HOLD signals.
 
 ---
 
