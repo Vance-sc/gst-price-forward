@@ -76,5 +76,5 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp
           lftp -u "$FTP_USER","$FTP_PASS" \
             -e "set ftp:ssl-force true; set ftp:ssl-protect-data true; \
-                mirror -R --delete --verbose public/ /; quit" \
+                mirror -R --delete --verbose public/ public_html/; quit" \
             "$FTP_HOST"
