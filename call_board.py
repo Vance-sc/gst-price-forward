@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""GST Forward-Buy Daily Calls board — one-page PDF in the style of the
-original board, but leading with THE CALL per cut: the momentum lock rule
-(1-week move > +4% -> LOCK ~4 weeks) overriding the v2 30-day signal.
+"""GST Forward-Buy Daily Calls board (EXPERIMENTAL / LOCAL ONLY).
+
+NOT the official production call. The vendor-facing signal is Lock Score v2
+from generate.py (dashboard + make_board_pdf.py / board.pdf). This script
+optionally overrides the v2 30-day signal with a momentum lock rule
+(1-week move > +4% -> LOCK ~4 weeks). Do not add to CI.
+
 Usage: python3 call_board.py board_data.json
 CALLBOARD_VERSION = 5
 """

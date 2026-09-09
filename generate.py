@@ -665,6 +665,15 @@ def main():
             print("WARNING:", warnings[-1])
             (series, cutout), is_demo = generate_demo(), True
 
+    if is_demo and PUBLIC_BUILD:
+        # Never publish sample LOCK/HOLD signals to Pages / board.gstmeat.com.
+        msg = ("PUBLIC_BUILD=1 refuses DEMO mode — live USDA data required. "
+               "Fix the fetch or unset PUBLIC_BUILD for local demos.")
+        print("ERROR:", msg)
+        if warnings:
+            print("Warnings:", *warnings, sep="\n  - ")
+        raise SystemExit(2)
+
     out = build(series, cutout, is_demo, warnings)
     print(f"Built dashboard for {len(out['products'])} products. "
           f"Mode: {'DEMO' if is_demo else 'LIVE'}.")
