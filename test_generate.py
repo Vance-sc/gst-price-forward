@@ -130,14 +130,21 @@ check("label_for honors dynamic thresholds",
       g.label_for(55, 30, {30: {"lock": 54, "hold": 40},
                            60: {"lock": 62, "hold": 39}})[0] == "LOCK")
 v, conf = g.validation_for("chuck_roll", 60, "LOCK")
-check("validation lookup: chuck_roll 60d LOCK hit .65 -> High",
-      v["hit"] == 0.65 and conf == "High", f"{v} {conf}")
+_want_hit = g.VALIDATION["chuck_roll"][60]["LOCK"]["hit"]
+_eff = _want_hit
+_want_conf = "High" if _eff >= 0.65 else "Medium" if _eff >= 0.55 else "Low"
+check("validation lookup: chuck_roll 60d LOCK matches VALIDATION",
+      v["hit"] == _want_hit and conf == _want_conf, f"{v} {conf}")
 v2_, conf2 = g.validation_for("chuck_roll", 60, "HOLD")
-check("validation: HOLD low hit rate = High confidence (inverse)",
-      conf2 == "High", f"{v2_} {conf2}")
+_hold_hit = g.VALIDATION["chuck_roll"][60]["HOLD"]["hit"]
+_hold_conf = "High" if (1 - _hold_hit) >= 0.65 else "Medium" if (1 - _hold_hit) >= 0.55 else "Low"
+check("validation: HOLD inverse hit -> confidence",
+      conf2 == _hold_conf, f"{v2_} {conf2}")
 v3_, conf3 = g.validation_for("shoulder_clod", 30, "LOCK")
-check("validation: clod 30d modest edge -> Medium",
-      conf3 == "Medium", str(v3_))
+_clod_hit = g.VALIDATION["shoulder_clod"][30]["LOCK"]["hit"]
+_clod_conf = "High" if _clod_hit >= 0.65 else "Medium" if _clod_hit >= 0.55 else "Low"
+check("validation: clod 30d LOCK confidence matches hit",
+      conf3 == _clod_conf, f"{v3_} {conf3}")
 vp, _ = g.validation_for("nonexistent", 30, "SPLIT")
 check("validation: pooled fallback works",
       vp["n"] == g.VALIDATION["pooled"][30]["SPLIT"]["n"], str(vp))
@@ -146,6 +153,40 @@ th = g.pooled_thresholds({"x": g.build_features(flat_spike[:200], cut_flat)})
 check("pooled_thresholds: thin history -> defaults",
       th == g.DEFAULT_THRESHOLDS or th[30] == g.DEFAULT_THRESHOLDS[30],
       str(th))
+
+check("seasonality weight present", "seasonality" in g.WEIGHTS and g.WEIGHTS["seasonality"] > 0)
+
+# Same ISO-week seasonality: build multi-year series that is rich only in week ~36
+# (approx early Sep). Prior years same week cheap -> current seas feature positive
+# (rich for season) -> seasonality component LOW after contrarian sign.
+import datetime as _dt
+_base = _dt.date(2018, 1, 1)
+_days = []
+_d = _base
+while _d < _dt.date(2026, 9, 15):
+    if _d.weekday() < 5:
+        _days.append(_d)
+    _d += _dt.timedelta(days=1)
+# price 400 normally; in ISO week 36 of 2026 jump to 480 (rich for that week)
+def _px(d):
+    if d.year == 2026 and d.isocalendar()[1] == 36:
+        return 480.0
+    return 400.0
+_series = [(d, _px(d), 50000) for d in _days]
+_cut = [(d, 400.0, 385.0) for d in _days]
+_Fs = g.build_features(_series, _cut)
+_i = len(_series) - 1
+# find last day in week 36 2026
+for _j in range(len(_series) - 1, -1, -1):
+    if _series[_j][0].year == 2026 and _series[_j][0].isocalendar()[1] == 36:
+        _i = _j
+        break
+check("seasonality feature set on rich ISO week",
+      _Fs["seas"][_i] is not None and _Fs["seas"][_i] > 5,
+      str(_Fs["seas"][_i]))
+_scs, _dets = g.score_at(_Fs, _i, 30)
+check("seasonality rich-for-week -> low component",
+      _dets.get("seasonality", 100) < 40, str(_dets.get("seasonality")))
 
 check("weights sum to 1.0", abs(sum(g.WEIGHTS.values()) - 1.0) < 1e-9)
 

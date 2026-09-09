@@ -44,18 +44,20 @@ don't switch it back without invoice evidence. After any remap, re-run
 
 ## What it is (and isn't)
 
-The 0–100 **Lock Score (v2)** blends four signals, each z-scored against its
-own trailing 250 observations:
+The 0–100 **Lock Score (v2+seas)** blends five signals, each z-scored against
+its own trailing history (seasonality uses same ISO-week priors):
 
-1. **Relative value (40%)** — cut price ÷ Choice cutout vs its own norm.
+1. **Relative value (35%)** — cut price ÷ Choice cutout vs its own norm.
    Cheap vs the cutout = high score. The strongest validated signal.
-2. **Momentum (25%, contrarian)** — these cuts mean-revert over 30–60 days,
+2. **Momentum (22%, contrarian)** — these cuts mean-revert over 30–60 days,
    so run-ups lower the score, dips raise it. (The v1 trend-following
    version backtested *inverted* and was replaced — don't restore it.)
-3. **Volume (20%)** — heavier-than-usual negotiated volume has preceded
+3. **Volume (18%)** — heavier-than-usual negotiated volume has preceded
    price strength.
-4. **Choice/Select spread (15%)** — an unusually wide spread has preceded
+4. **Choice/Select spread (13%)** — an unusually wide spread has preceded
    softness.
+5. **Seasonality (12%)** — cut/cutout vs the same ISO week in prior years
+   only (no lookahead). Cheap-for-this-week = high score.
 
 **Validation:** expanding-window walk-forward over 2018–2026. At every
 historical decision day, LOCK/HOLD thresholds were recalibrated as the

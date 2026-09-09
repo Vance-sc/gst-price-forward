@@ -215,6 +215,7 @@ function hz(h,d){
       '<div class="comprow"><span class="lbl">Momentum&#8224;</span>'+bar(c.momentum,'Contrarian momentum')+'<span class="val">'+c.momentum+'</span></div>'+
       '<div class="comprow"><span class="lbl">Volume</span>'+bar(c.volume,'Volume trend')+'<span class="val">'+c.volume+'</span></div>'+
       '<div class="comprow"><span class="lbl">C/S sprd</span>'+bar(c.cs_spread,'Choice-Select spread')+'<span class="val">'+c.cs_spread+'</span></div>'+
+      '<div class="comprow"><span class="lbl">Season</span>'+bar(c.seasonality,'Same ISO-week vs history')+'<span class="val">'+c.seasonality+'</span></div>'+
     '</div></div>';
 }
 
@@ -245,7 +246,7 @@ order.forEach((key,idx)=>{
     '<div class="chartbox"><canvas id="c'+idx+'" role="img" aria-label="Price history chart for '+esc(p.name)+'"></canvas></div>'+
     '<div class="meta"><span>Vs cutout: '+(p.rv_pct>=0?'+':'')+p.rv_pct+'% against its 250-day norm'+
       (p.rv_pct>1.5?' (rich)':p.rv_pct<-1.5?' (cheap)':'')+'</span>'+
-      '<span>&#8224; momentum is contrarian &middot; engine v2</span></div>';
+      '<span>&#8224; momentum is contrarian &middot; engine v2+seas</span></div>';
   grid.appendChild(el);
 
   // chart: show last ~180 pts

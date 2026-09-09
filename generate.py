@@ -7,8 +7,8 @@ slug 2453), computes the v2 Lock Score, and writes data.json + index.html.
 
 v2 signal (validated out-of-sample, see VALIDATION below)
 ---------------------------------------------------------
-Score = 40% relative value + 25% contrarian momentum + 20% volume trend
-        + 15% Choice/Select-spread anomaly.
+Score = 35% relative value + 22% contrarian momentum + 18% volume trend
+        + 13% Choice/Select-spread anomaly + 12% calendar seasonality.
 
   * Relative value : cut price / Choice cutout vs its own trailing 250-obs
                      average ratio. CHEAP vs cutout -> high score.
@@ -18,6 +18,8 @@ Score = 40% relative value + 25% contrarian momentum + 20% volume trend
                      negotiated volume -> high score.
   * C/S anomaly    : Choice-Select cutout spread vs trailing mean. Wide ->
                      low score.
+  * Seasonality    : cut/cutout ratio vs same ISO-week mean over prior years
+                     only (no lookahead). Cheap-for-this-week -> high score.
 
 Each feature is z-scored against its own trailing 250 observations
 (self-calibrating; no fitted constants except weights and thresholds), then
@@ -115,9 +117,10 @@ except ImportError:
 
 FETCH_YEARS = 5          # features need ~500 obs of warmup; 5y ≈ 1,250
 
-# v2 weights — calibrated with the 2019-2023 train window. Sum to 1.0.
-WEIGHTS = {"rel_value": 0.40, "momentum": 0.25,
-           "volume": 0.20, "cs_spread": 0.15}
+# v2+seasonality weights — sum to 1.0. Seasonality ~12% for same-ISO-week
+# cheap/rich vs history; other weights trimmed proportionally from v2.
+WEIGHTS = {"rel_value": 0.35, "momentum": 0.22,
+           "volume": 0.18, "cs_spread": 0.13, "seasonality": 0.12}
 
 # Thresholds are SELF-CALIBRATING at build time: 70th/30th percentile of
 # pooled decision-day scores over the fetched history (see
@@ -133,52 +136,42 @@ DEFAULT_THRESHOLDS = {30: {"lock": 61.0, "hold": 40.0},
 # mean = avg forward price move on days in that bucket; hit = share of days
 # the price rose (for HOLD, a LOW hit rate is good — you were waiting).
 # Regenerate via backtest.py after any model change.
-VALIDATION = {
-    "pooled": {
-        30: {"LOCK": {"mean": 2.14, "hit": 0.64, "n": 581},
-             "SPLIT": {"mean": 0.88, "hit": 0.53, "n": 806},
-             "HOLD": {"mean": -0.94, "hit": 0.43, "n": 594}},
-        60: {"LOCK": {"mean": 4.18, "hit": 0.67, "n": 596},
-             "SPLIT": {"mean": 2.16, "hit": 0.58, "n": 771},
-             "HOLD": {"mean": -2.32, "hit": 0.38, "n": 594}},
-    },
-    "chuck_roll": {
-        30: {"LOCK": {"mean": 1.32, "hit": 0.59, "n": 145},
-             "SPLIT": {"mean": 1.21, "hit": 0.48, "n": 136},
-             "HOLD": {"mean": -0.50, "hit": 0.47, "n": 116}},
-        60: {"LOCK": {"mean": 3.53, "hit": 0.65, "n": 147},
-             "SPLIT": {"mean": 4.07, "hit": 0.58, "n": 134},
-             "HOLD": {"mean": -3.90, "hit": 0.31, "n": 112}}},
-    "flap": {
-        30: {"LOCK": {"mean": 3.02, "hit": 0.65, "n": 125},
-             "SPLIT": {"mean": 1.05, "hit": 0.59, "n": 148},
-             "HOLD": {"mean": -1.52, "hit": 0.46, "n": 122}},
-        60: {"LOCK": {"mean": 5.01, "hit": 0.67, "n": 125},
-             "SPLIT": {"mean": 2.82, "hit": 0.63, "n": 142},
-             "HOLD": {"mean": -3.18, "hit": 0.36, "n": 124}}},
-    "shoulder_clod": {
-        30: {"LOCK": {"mean": 1.26, "hit": 0.56, "n": 103},
-             "SPLIT": {"mean": 1.80, "hit": 0.55, "n": 174},
-             "HOLD": {"mean": -1.25, "hit": 0.39, "n": 119}},
-        60: {"LOCK": {"mean": 3.06, "hit": 0.59, "n": 104},
-             "SPLIT": {"mean": 2.56, "hit": 0.60, "n": 156},
-             "HOLD": {"mean": -1.08, "hit": 0.45, "n": 132}}},
-    "short_rib": {   # USDA 130 (chuck) — invoice-verified spec
-        30: {"LOCK": {"mean": 2.15, "hit": 0.65, "n": 113},
-             "SPLIT": {"mean": 0.02, "hit": 0.50, "n": 173},
-             "HOLD": {"mean": -1.08, "hit": 0.38, "n": 110}},
-        60: {"LOCK": {"mean": 3.59, "hit": 0.67, "n": 120},
-             "SPLIT": {"mean": -0.03, "hit": 0.51, "n": 169},
-             "HOLD": {"mean": -1.45, "hit": 0.39, "n": 103}}},
-    "round": {
-        30: {"LOCK": {"mean": 3.20, "hit": 0.75, "n": 95},
-             "SPLIT": {"mean": 0.42, "hit": 0.54, "n": 175},
-             "HOLD": {"mean": -0.36, "hit": 0.45, "n": 127}},
-        60: {"LOCK": {"mean": 5.97, "hit": 0.79, "n": 100},
-             "SPLIT": {"mean": 1.89, "hit": 0.58, "n": 170},
-             "HOLD": {"mean": -2.09, "hit": 0.39, "n": 123}}},
-}
-
+VALIDATION = {'pooled': {30: {'LOCK': {'mean': 2.52, 'hit': 0.62, 'n': 520},
+                 'SPLIT': {'mean': 0.82, 'hit': 0.55, 'n': 767},
+                 'HOLD': {'mean': -0.56, 'hit': 0.43, 'n': 564}},
+            60: {'LOCK': {'mean': 4.78, 'hit': 0.68, 'n': 516},
+                 'SPLIT': {'mean': 1.95, 'hit': 0.57, 'n': 758},
+                 'HOLD': {'mean': -1.78, 'hit': 0.4, 'n': 557}}},
+ 'chuck_roll': {30: {'LOCK': {'mean': 1.66, 'hit': 0.63, 'n': 119},
+                     'SPLIT': {'mean': 1.86, 'hit': 0.55, 'n': 141},
+                     'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 111}},
+                60: {'LOCK': {'mean': 4.6, 'hit': 0.64, 'n': 123},
+                     'SPLIT': {'mean': 3.74, 'hit': 0.6, 'n': 131},
+                     'HOLD': {'mean': -3.02, 'hit': 0.35, 'n': 113}}},
+ 'flap': {30: {'LOCK': {'mean': 3.55, 'hit': 0.64, 'n': 110},
+               'SPLIT': {'mean': -0.03, 'hit': 0.51, 'n': 141},
+               'HOLD': {'mean': -0.45, 'hit': 0.49, 'n': 118}},
+          60: {'LOCK': {'mean': 5.74, 'hit': 0.7, 'n': 107},
+               'SPLIT': {'mean': 1.52, 'hit': 0.6, 'n': 140},
+               'HOLD': {'mean': -2.06, 'hit': 0.42, 'n': 118}}},
+ 'shoulder_clod': {30: {'LOCK': {'mean': 1.73, 'hit': 0.53, 'n': 97},
+                        'SPLIT': {'mean': 1.65, 'hit': 0.63, 'n': 149},
+                        'HOLD': {'mean': -0.4, 'hit': 0.38, 'n': 124}},
+                   60: {'LOCK': {'mean': 4.27, 'hit': 0.62, 'n': 93},
+                        'SPLIT': {'mean': 2.34, 'hit': 0.63, 'n': 150},
+                        'HOLD': {'mean': -0.67, 'hit': 0.41, 'n': 123}}},
+ 'short_rib': {30: {'LOCK': {'mean': 2.17, 'hit': 0.56, 'n': 102},
+                    'SPLIT': {'mean': 0.12, 'hit': 0.51, 'n': 164},
+                    'HOLD': {'mean': -0.51, 'hit': 0.42, 'n': 104}},
+               60: {'LOCK': {'mean': 3.02, 'hit': 0.63, 'n': 102},
+                    'SPLIT': {'mean': 0.64, 'hit': 0.51, 'n': 163},
+                    'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 101}}},
+ 'round': {30: {'LOCK': {'mean': 3.65, 'hit': 0.77, 'n': 92},
+                'SPLIT': {'mean': 0.61, 'hit': 0.56, 'n': 172},
+                'HOLD': {'mean': -0.68, 'hit': 0.41, 'n': 107}},
+           60: {'LOCK': {'mean': 6.41, 'hit': 0.84, 'n': 91},
+                'SPLIT': {'mean': 1.84, 'hit': 0.55, 'n': 174},
+                'HOLD': {'mean': -2.41, 'hit': 0.38, 'n': 102}}}}
 PUBLISH_POINTS = 270
 STALE_BUSINESS_DAYS = 4
 PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
@@ -385,9 +378,11 @@ def build_features(series, cutout):
         cs.append(cutout[ci][1] - cutout[ci][2]
                   if ci is not None and cutout[ci][2] is not None else None)
     F = {"rv": [None] * n, "roc30": [None] * n, "roc60": [None] * n,
-         "vr": [None] * n, "cs": [None] * n}
+         "vr": [None] * n, "cs": [None] * n, "seas": [None] * n}
     prices = [p for _d, p, _l in series]
     lbs = [l for _d, _p, l in series]
+    # Prior same-ISO-week ratios only (strictly earlier observations — no lookahead).
+    week_hist = {}
     for i in range(n):
         if i >= 250 and ratio[i] is not None:
             w = [r for r in ratio[i - 250:i] if r is not None]
@@ -406,6 +401,16 @@ def build_features(series, cutout):
             w = [x for x in cs[i - 250:i] if x is not None]
             if len(w) > 100:
                 F["cs"][i] = cs[i] - _mean(w)
+        # Seasonality: cheap/rich for this ISO week vs prior same weeks only.
+        d = series[i][0]
+        iso_w = d.isocalendar()[1]
+        prior = week_hist.get(iso_w, [])
+        if ratio[i] is not None and len(prior) >= 3:
+            sm = _mean(prior)
+            if sm:
+                F["seas"][i] = (ratio[i] / sm - 1) * 100
+        if ratio[i] is not None:
+            week_hist.setdefault(iso_w, []).append(ratio[i])
     return F
 
 
@@ -419,24 +424,29 @@ def _z_at(arr, i):
 
 
 def score_at(F, i, horizon_days):
-    """v2 composite score at index i, or (None, {}) if warmup insufficient.
-    Signs: rel-value contrarian (cheap=high), momentum contrarian,
-    volume positive, C/S-anomaly contrarian (optional feature)."""
+    """v2+seasonality composite at index i, or (None, {}) if warmup insufficient.
+    Signs: rel-value / momentum / C/S / seasonality contrarian (cheap=high);
+    volume positive. Seasonality optional (neutral 50 if thin history)."""
     zr = _z_at(F["rv"], i)
     zm = _z_at(F["roc30" if horizon_days <= 30 else "roc60"], i)
     zv = _z_at(F["vr"], i)
     zc = _z_at(F["cs"], i)
+    zs = _z_at(F["seas"], i) if "seas" in F else None
     if zr is None or zm is None or zv is None:
         return None, {}
     rv_c, m_c, v_c = _comp(zr, -1), _comp(zm, -1), _comp(zv, 1)
     cs_c = _comp(zc, -1) if zc is not None else 50.0
+    seas_c = _comp(zs, -1) if zs is not None else 50.0
     score = (WEIGHTS["rel_value"] * rv_c + WEIGHTS["momentum"] * m_c
-             + WEIGHTS["volume"] * v_c + WEIGHTS["cs_spread"] * cs_c)
+             + WEIGHTS["volume"] * v_c + WEIGHTS["cs_spread"] * cs_c
+             + WEIGHTS["seasonality"] * seas_c)
     detail = {"rel_value": round(rv_c, 1), "momentum": round(m_c, 1),
               "volume": round(v_c, 1), "cs_spread": round(cs_c, 1),
+              "seasonality": round(seas_c, 1),
               "z": {"rel_value": round(zr, 2), "momentum": round(zm, 2),
                     "volume": round(zv, 2),
-                    "cs_spread": round(zc, 2) if zc is not None else None},
+                    "cs_spread": round(zc, 2) if zc is not None else None,
+                    "seasonality": round(zs, 2) if zs is not None else None},
               "rv_pct": round(F["rv"][i], 2)}
     return _clamp(score), detail
 
@@ -547,7 +557,7 @@ def analyze(series, cutout):
                 "signal": tag, "message": msg,
                 "components": {k: detail[k] for k in
                                ("rel_value", "momentum", "volume",
-                                "cs_spread")},
+                                "cs_spread", "seasonality")},
                 "detail": detail,
                 "confidence": conf,
                 "validation": vstats,
@@ -619,8 +629,8 @@ def build(series, cutout, is_demo, warnings):
         "cutout": cut_meta,
         "source": "USDA AMS Market News — LM_XB403 (National Daily Boxed "
                   "Beef Cutout & Cuts), LMR DataMart",
-        "engine": "v2 (rel-value / contrarian momentum / volume / C-S "
-                  "anomaly; expanding-window validated 2018-2026, "
+        "engine": "v2+seas (rel-value / contrarian momentum / volume / "
+                  "C-S / ISO-week seasonality; expanding-window validated, "
                   "self-calibrating thresholds)",
         "weights": WEIGHTS,
         "thresholds": thresholds,
