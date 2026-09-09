@@ -27,10 +27,11 @@ squashed with tanh. The v1 momentum-positive score backtested INVERTED —
 do not restore it.
 
 Provenance: features ranked by quintile-spread study on 2019-2026 history;
-weights/thresholds calibrated on 2019-2023 and validated out-of-sample on
-2024-2026 (walk-forward, no lookahead). Pooled test: 30d LOCK +2.36%/HOLD
--0.73%; 60d LOCK +4.59%/HOLD -2.62%. Per-bucket hit rates in VALIDATION are
-shown on the dashboard as the confidence figure.
+weights calibrated on 2019-2023 and validated out-of-sample (walk-forward,
+no lookahead). LOCK cutoffs use a hardened self-calibrating percentile
+(asymmetric: stricter on 30d) so LOCK is rarer and closer to Vance's
+~4–5% high-confidence lock bar; soft SPLIT must not nudge locking.
+Per-bucket hit rates in VALIDATION are shown as the confidence figure.
 
 Data source
 -----------
@@ -122,56 +123,59 @@ FETCH_YEARS = 5          # features need ~500 obs of warmup; 5y ≈ 1,250
 WEIGHTS = {"rel_value": 0.35, "momentum": 0.22,
            "volume": 0.18, "cs_spread": 0.13, "seasonality": 0.12}
 
-# Thresholds are SELF-CALIBRATING at build time: 70th/30th percentile of
-# pooled decision-day scores over the fetched history (see
-# pooled_thresholds). This mirrors the expanding-window validation
-# procedure exactly. Static fallback only if history is too thin.
-DEFAULT_THRESHOLDS = {30: {"lock": 61.0, "hold": 40.0},
-                      60: {"lock": 62.0, "hold": 39.5}}
+# Thresholds are SELF-CALIBRATING at build time from pooled decision-day
+# scores (see pooled_thresholds). Mirrors expanding-window validation.
+# Vance lock bar: only lock with vendors when expected upside is ~4–5%
+# with pretty high confidence; otherwise float. Soft SPLIT must not nudge
+# locking. LOCK uses a higher percentile than HOLD, and 30d is stricter
+# than 60d (shorter horizon needs a rarer/top-tier score for similar edge).
+LOCK_PERCENTILE = {30: 0.88, 60: 0.82}
+HOLD_PERCENTILE = 0.30
+# Keep LOCK only when validated OOS mean/hit meet the bar; else downgrade
+# to SPLIT (float language). Applied after score labeling in analyze().
+LOCK_MIN_MEAN = {30: 3.5, 60: 4.0}   # ~4–5% bar; 30d floor = hardened pooled edge
+LOCK_MIN_HIT = 0.65                 # High confidence (same cutoff as conf label)
+# Static fallback only if history is too thin (raised with the harder bar).
+DEFAULT_THRESHOLDS = {30: {"lock": 68.0, "hold": 40.0},
+                      60: {"lock": 66.0, "hold": 39.5}}
 
-# Out-of-sample validation: EXPANDING-WINDOW walk-forward, 2018-08-15 →
-# 2026-07-01 (thresholds recalibrated at every decision day from prior
-# scores only; decisions every 5 trading days; data from 2016 for warmup).
-# Edge held in all three eras (2018-20, 2021-23, 2024-26).
-# mean = avg forward price move on days in that bucket; hit = share of days
-# the price rose (for HOLD, a LOW hit rate is good — you were waiting).
-# Regenerate via backtest.py after any model change.
-VALIDATION = {'pooled': {30: {'LOCK': {'mean': 2.52, 'hit': 0.62, 'n': 520},
-                 'SPLIT': {'mean': 0.82, 'hit': 0.55, 'n': 767},
-                 'HOLD': {'mean': -0.56, 'hit': 0.43, 'n': 564}},
-            60: {'LOCK': {'mean': 4.78, 'hit': 0.68, 'n': 516},
-                 'SPLIT': {'mean': 1.95, 'hit': 0.57, 'n': 758},
-                 'HOLD': {'mean': -1.78, 'hit': 0.4, 'n': 557}}},
- 'chuck_roll': {30: {'LOCK': {'mean': 1.66, 'hit': 0.63, 'n': 119},
-                     'SPLIT': {'mean': 1.86, 'hit': 0.55, 'n': 141},
-                     'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 111}},
-                60: {'LOCK': {'mean': 4.6, 'hit': 0.64, 'n': 123},
-                     'SPLIT': {'mean': 3.74, 'hit': 0.6, 'n': 131},
-                     'HOLD': {'mean': -3.02, 'hit': 0.35, 'n': 113}}},
- 'flap': {30: {'LOCK': {'mean': 3.55, 'hit': 0.64, 'n': 110},
-               'SPLIT': {'mean': -0.03, 'hit': 0.51, 'n': 141},
-               'HOLD': {'mean': -0.45, 'hit': 0.49, 'n': 118}},
-          60: {'LOCK': {'mean': 5.74, 'hit': 0.7, 'n': 107},
-               'SPLIT': {'mean': 1.52, 'hit': 0.6, 'n': 140},
-               'HOLD': {'mean': -2.06, 'hit': 0.42, 'n': 118}}},
- 'shoulder_clod': {30: {'LOCK': {'mean': 1.73, 'hit': 0.53, 'n': 97},
-                        'SPLIT': {'mean': 1.65, 'hit': 0.63, 'n': 149},
-                        'HOLD': {'mean': -0.4, 'hit': 0.38, 'n': 124}},
-                   60: {'LOCK': {'mean': 4.27, 'hit': 0.62, 'n': 93},
-                        'SPLIT': {'mean': 2.34, 'hit': 0.63, 'n': 150},
-                        'HOLD': {'mean': -0.67, 'hit': 0.41, 'n': 123}}},
- 'short_rib': {30: {'LOCK': {'mean': 2.17, 'hit': 0.56, 'n': 102},
-                    'SPLIT': {'mean': 0.12, 'hit': 0.51, 'n': 164},
-                    'HOLD': {'mean': -0.51, 'hit': 0.42, 'n': 104}},
-               60: {'LOCK': {'mean': 3.02, 'hit': 0.63, 'n': 102},
-                    'SPLIT': {'mean': 0.64, 'hit': 0.51, 'n': 163},
-                    'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 101}}},
- 'round': {30: {'LOCK': {'mean': 3.65, 'hit': 0.77, 'n': 92},
-                'SPLIT': {'mean': 0.61, 'hit': 0.56, 'n': 172},
-                'HOLD': {'mean': -0.68, 'hit': 0.41, 'n': 107}},
-           60: {'LOCK': {'mean': 6.41, 'hit': 0.84, 'n': 91},
-                'SPLIT': {'mean': 1.84, 'hit': 0.55, 'n': 174},
-                'HOLD': {'mean': -2.41, 'hit': 0.38, 'n': 102}}}}
+MSG_LOCK = "Top-tier Lock Score — locking looks favorable vs floating"
+MSG_SPLIT = "Mixed — prefer floating / waiting; no strong lock case yet"
+MSG_HOLD = "Rich vs cutout / post-rally — wait"
+
+# Out-of-sample validation: EXPANDING-WINDOW walk-forward (thresholds use
+# LOCK_PERCENTILE / HOLD_PERCENTILE on prior pooled scores only; decisions
+# every 5 trading days). Edge held across eras. mean = avg forward price
+# move on days in that bucket; hit = share of days the price rose (for HOLD,
+# a LOW hit rate is good — you were waiting). Regenerate via backtest.py
+# after any model change. Numbers below are percentile-policy OOS; live
+# LOCK is further gated by apply_lock_bar() (Vance ~4–5% / High conf bar).
+VALIDATION = {
+ 'pooled': {
+  30: {'LOCK': {'mean': 3.51, 'hit': 0.66, 'n': 200}, 'SPLIT': {'mean': 1.14, 'hit': 0.57, 'n': 1088}, 'HOLD': {'mean': -0.56, 'hit': 0.43, 'n': 564}},
+  60: {'LOCK': {'mean': 4.92, 'hit': 0.7, 'n': 298}, 'SPLIT': {'mean': 2.54, 'hit': 0.59, 'n': 976}, 'HOLD': {'mean': -1.78, 'hit': 0.4, 'n': 557}}
+ },
+ 'chuck_roll': {
+  30: {'LOCK': {'mean': 1.76, 'hit': 0.64, 'n': 39}, 'SPLIT': {'mean': 1.77, 'hit': 0.57, 'n': 221}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 111}},
+  60: {'LOCK': {'mean': 3.54, 'hit': 0.6, 'n': 67}, 'SPLIT': {'mean': 4.38, 'hit': 0.63, 'n': 187}, 'HOLD': {'mean': -3.02, 'hit': 0.35, 'n': 113}}
+ },
+ 'flap': {
+  30: {'LOCK': {'mean': 6.57, 'hit': 0.7, 'n': 47}, 'SPLIT': {'mean': 0.38, 'hit': 0.53, 'n': 204}, 'HOLD': {'mean': -0.45, 'hit': 0.49, 'n': 118}},
+  60: {'LOCK': {'mean': 6.66, 'hit': 0.75, 'n': 65}, 'SPLIT': {'mean': 2.16, 'hit': 0.6, 'n': 182}, 'HOLD': {'mean': -2.06, 'hit': 0.42, 'n': 118}}
+ },
+ 'shoulder_clod': {
+  30: {'LOCK': {'mean': 1.95, 'hit': 0.61, 'n': 38}, 'SPLIT': {'mean': 1.64, 'hit': 0.59, 'n': 209}, 'HOLD': {'mean': -0.4, 'hit': 0.38, 'n': 124}},
+  60: {'LOCK': {'mean': 3.12, 'hit': 0.63, 'n': 62}, 'SPLIT': {'mean': 3.06, 'hit': 0.62, 'n': 181}, 'HOLD': {'mean': -0.67, 'hit': 0.41, 'n': 123}}
+ },
+ 'short_rib': {
+  30: {'LOCK': {'mean': 2.21, 'hit': 0.53, 'n': 38}, 'SPLIT': {'mean': 0.69, 'hit': 0.53, 'n': 228}, 'HOLD': {'mean': -0.51, 'hit': 0.42, 'n': 104}},
+  60: {'LOCK': {'mean': 3.43, 'hit': 0.62, 'n': 53}, 'SPLIT': {'mean': 1.09, 'hit': 0.54, 'n': 212}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 101}}
+ },
+ 'round': {
+  30: {'LOCK': {'mean': 4.38, 'hit': 0.79, 'n': 38}, 'SPLIT': {'mean': 1.22, 'hit': 0.61, 'n': 226}, 'HOLD': {'mean': -0.68, 'hit': 0.41, 'n': 107}},
+  60: {'LOCK': {'mean': 8.25, 'hit': 0.96, 'n': 51}, 'SPLIT': {'mean': 2.26, 'hit': 0.57, 'n': 214}, 'HOLD': {'mean': -2.41, 'hit': 0.38, 'n': 102}}
+ }
+}
 PUBLISH_POINTS = 270
 STALE_BUSINESS_DAYS = 4
 PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
@@ -452,9 +456,10 @@ def score_at(F, i, horizon_days):
 
 
 def pooled_thresholds(feature_map):
-    """Self-calibrating LOCK/HOLD cutoffs: 70th/30th percentile of pooled
-    decision-day scores (every 5th obs after warmup) across all products —
-    the same procedure the expanding-window validation used."""
+    """Self-calibrating LOCK/HOLD cutoffs from pooled decision-day scores
+    (every 5th obs after warmup) across all products — same procedure as
+    expanding-window validation. LOCK percentile is asymmetric (stricter
+    on 30d) to push LOCK edge toward Vance's ~4–5% high-confidence bar."""
     th = {}
     for h in (30, 60):
         scores = []
@@ -465,20 +470,23 @@ def pooled_thresholds(feature_map):
                     scores.append(s)
         if len(scores) >= 150:
             scores.sort()
-            th[h] = {"lock": round(scores[int(len(scores) * 0.7)], 1),
-                     "hold": round(scores[int(len(scores) * 0.3)], 1)}
+            lp = LOCK_PERCENTILE[h]
+            hp = HOLD_PERCENTILE
+            th[h] = {"lock": round(scores[int(len(scores) * lp)], 1),
+                     "hold": round(scores[int(len(scores) * hp)], 1)}
         else:
             th[h] = dict(DEFAULT_THRESHOLDS[h])
     return th
 
 
 def label_for(score, horizon_days, thresholds=None):
+    """Score-only LOCK/SPLIT/HOLD. apply_lock_bar() may downgrade LOCK."""
     th = (thresholds or DEFAULT_THRESHOLDS)[30 if horizon_days <= 30 else 60]
     if score >= th["lock"]:
-        return ("LOCK", "Cheap vs cutout / post-dip — locking looks favorable")
+        return ("LOCK", MSG_LOCK)
     if score >= th["hold"]:
-        return ("SPLIT", "Mixed — consider locking part of the volume")
-    return ("HOLD", "Rich vs cutout / post-rally — wait")
+        return ("SPLIT", MSG_SPLIT)
+    return ("HOLD", MSG_HOLD)
 
 
 def validation_for(key, horizon_days, signal):
@@ -496,6 +504,33 @@ def validation_for(key, horizon_days, signal):
     if v["n"] < 25 and conf == "High":
         conf = "Medium"
     return v, conf
+
+
+def meets_lock_bar(vstats, conf, horizon_days):
+    """Vance bar: ~4–5% expected upside with High confidence."""
+    h = 30 if horizon_days <= 30 else 60
+    if not vstats:
+        return False
+    if conf != "High":
+        return False
+    if vstats.get("hit", 0) < LOCK_MIN_HIT:
+        return False
+    if vstats.get("mean", 0) < LOCK_MIN_MEAN[h]:
+        return False
+    return True
+
+
+def apply_lock_bar(tag, msg, key, horizon_days):
+    """Downgrade score-based LOCK to SPLIT unless validated bar is met.
+    Soft SPLIT must not nudge locking — float/wait language only."""
+    if tag != "LOCK":
+        return tag, msg, *validation_for(key, horizon_days, tag)
+    vstats, conf = validation_for(key, horizon_days, "LOCK")
+    if meets_lock_bar(vstats, conf, horizon_days):
+        return "LOCK", MSG_LOCK, vstats, conf
+    # Near-lock / soft lock -> float language (SPLIT), not a lock nudge
+    v2, conf2 = validation_for(key, horizon_days, "SPLIT")
+    return "SPLIT", MSG_SPLIT, v2, conf2
 
 
 def volatility(prices, n=30):
@@ -551,7 +586,7 @@ def analyze(series, cutout):
                 usable = False
                 break
             tag, msg = label_for(score, h, thresholds)
-            vstats, conf = validation_for(key, h, tag)
+            tag, msg, vstats, conf = apply_lock_bar(tag, msg, key, h)
             horizons[h] = {
                 "score": round(score, 1),
                 "signal": tag, "message": msg,

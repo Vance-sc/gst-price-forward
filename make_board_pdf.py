@@ -205,8 +205,8 @@ lx = M + (len(ORDER) % COLS) * (CW + GX)
 ly1 = TOP - (len(ORDER) // COLS) * (CH + GY)
 text(lx + 0.012, ly1 - 0.015, "How to read it", size=9, weight="bold")
 for i, (sig, desc) in enumerate([
-        ("LOCK", "cheap vs cutout / post-dip — locking looks favorable"),
-        ("SPLIT", "mixed — consider locking part of the volume"),
+        ("LOCK", "top-tier score — locking looks favorable vs floating"),
+        ("SPLIT", "mixed — prefer floating / waiting; no strong lock case"),
         ("HOLD", "rich vs cutout / post-rally — wait")]):
     yy = ly1 - 0.035 - i * 0.017
     fig.patches.append(FancyBboxPatch(
