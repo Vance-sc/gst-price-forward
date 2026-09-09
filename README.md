@@ -4,8 +4,8 @@ A daily dashboard that reads USDA boxed-beef prices and gives a
 **30- and 60-day "lock" signal** to help decide when to price-fix product with
 a vendor (Cargill, Zant, etc.).
 
-- **Green / LOCK** — market under upward pressure; locking looks favorable
-- **Amber / SPLIT** — mixed; consider locking part of the volume
+- **Green / LOCK** — top-tier Lock Score; locking looks favorable (~4–5% high-confidence bar)
+- **Amber / SPLIT** — mixed; prefer floating / waiting (not a lock nudge)
 - **Red / HOLD** — soft or softening; little urgency to lock now
 
 ## Official call (one rule)
@@ -59,16 +59,19 @@ its own trailing history (seasonality uses same ISO-week priors):
 5. **Seasonality (12%)** — cut/cutout vs the same ISO week in prior years
    only (no lookahead). Cheap-for-this-week = high score.
 
+**Vance lock bar:** GST only locks with vendors when expected upside is
+~4–5% with pretty high confidence; otherwise float. Soft SPLIT is float/wait
+language and must not nudge locking.
+
 **Validation:** expanding-window walk-forward over 2018–2026. At every
-historical decision day, LOCK/HOLD thresholds were recalibrated as the
-70th/30th percentile of *prior* pooled scores only — no lookahead anywhere.
-Pooled test (n≈580–790 per bucket): 30d LOCK days +2.35% avg forward move
-vs HOLD −1.07%; 60d LOCK +3.94% vs HOLD −2.38%. The edge held in all three
-eras (2018–20, 2021–23, 2024–26). The production build recalibrates its
-thresholds by the same procedure on every run, so the live board is exactly
-what was validated. Each card shows the validated hit rate for its bucket —
-that is the Confidence figure. **It is still not a forecast**: supply
-shocks, packer margins, and demand swings can override any signal. Re-run
+historical decision day, LOCK/HOLD thresholds were recalibrated from *prior*
+pooled scores only (`LOCK_PERCENTILE` 30d=0.88 / 60d=0.82, HOLD 0.30) — no
+lookahead. Hardened pooled test: 30d LOCK +3.51% (hit 0.66, n=200) vs HOLD
+−0.56%; 60d LOCK +4.92% (hit 0.70, n=298) vs HOLD −1.78%. LOCK is materially
+rarer than the old 70th-percentile bar (30d n 520→200). Production also
+applies `apply_lock_bar()` so LOCK is shown only when validated mean/hit meet
+the bar. See `RESULTS.md`. **It is still not a forecast**: supply shocks,
+packer margins, and demand swings can override any signal. Re-run
 `python backtest.py` after any model change and update `VALIDATION` in
 `generate.py`; if the pooled test fails the printed pass criterion, don't
 ship the change.

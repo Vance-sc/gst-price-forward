@@ -117,8 +117,8 @@ HTML = r"""<!DOCTYPE html>
   <div id="warnings"></div>
   <div class="board">
     <span class="legendttl">How to read it:</span>
-    <span class="legend-item"><span class="pill b-LOCK"><span class="dot" style="background:#fff"></span>LOCK</span> Upward pressure — locking looks favorable</span>
-    <span class="legend-item"><span class="pill b-SPLIT"><span class="dot" style="background:#fff"></span>SPLIT</span> Mixed — lock part of the volume</span>
+    <span class="legend-item"><span class="pill b-LOCK"><span class="dot" style="background:#fff"></span>LOCK</span> Top-tier — locking looks favorable (~4–5% bar)</span>
+    <span class="legend-item"><span class="pill b-SPLIT"><span class="dot" style="background:#fff"></span>SPLIT</span> Mixed — prefer floating / waiting</span>
     <span class="legend-item"><span class="pill b-HOLD"><span class="dot" style="background:#fff"></span>HOLD</span> Soft — little urgency to lock</span>
     <span class="cutout" id="cutout"></span>
   </div>
@@ -144,11 +144,11 @@ HTML = r"""<!DOCTYPE html>
     </ul>
     <p><b>Validation:</b> expanding-window walk-forward over 2018-2026 — at
     every historical decision day the LOCK/HOLD thresholds were recalibrated
-    from prior data only, then graded against what prices actually did (no
-    lookahead). Pooled test: 30-day LOCK days preceded +2.4% average moves vs
-    −1.1% on HOLD days (n=577/612); 60-day LOCK +3.9% vs HOLD −2.4%
-    (n=613/610). The edge held in all three eras (2018-20, 2021-23, 2024-26).
-    The live board recalibrates its thresholds the same way on every build.
+    from prior data only with a hardened LOCK percentile (stricter on 30d),
+    then graded against what prices actually did (no lookahead). Vance only
+    locks when expected upside is ~4–5% with high confidence; soft SPLIT
+    means float/wait, not a lock nudge. See RESULTS.md for current pooled
+    LOCK mean/hit. The live board recalibrates thresholds the same way.
     Each card shows the validated hit rate for its current bucket — that
     figure, not the score itself, is the confidence measure. Past behavior is
     no guarantee; supply shocks and demand swings can override any signal.</p>

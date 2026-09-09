@@ -6,14 +6,18 @@ Expanding-window walk-forward backtest for the v2 Lock Score. Stdlib only.
     python backtest.py --years 10
     python backtest.py --demo         # synthetic (harness self-check only)
 
-Procedure (matches production exactly):
+Procedure (matches production score thresholds):
   * v2 features are built from trailing windows only -> lookahead-free.
   * At every decision day (every 5 trading days after a 520-obs warmup),
-    LOCK/HOLD thresholds are recomputed as the 70th/30th percentile of ALL
-    pooled prior decision scores â€” never future ones. Scoring starts once
-    150 prior scores exist. Everything after that burn-in is genuine
-    out-of-sample test data.
-  * Outcome: fwd% = (avg price over next horizon âˆ’ spot) / spot.
+    LOCK/HOLD thresholds are recomputed from ALL pooled prior decision
+    scores — never future ones — using generate.LOCK_PERCENTILE (asymmetric,
+    stricter on 30d) and HOLD_PERCENTILE. Scoring starts once 150 prior
+    scores exist. Everything after that burn-in is genuine out-of-sample
+    test data.
+  * Note: production also applies apply_lock_bar() (validated mean/hit gate)
+    after score labeling; this script measures the percentile policy that
+    feeds VALIDATION. Soft SPLIT must not nudge locking.
+  * Outcome: fwd% = (avg price over next horizon − spot) / spot.
     Positive = locking at ~spot beat floating.
 
 History deeper than ~8 years is fetched in two date-range chunks to stay
@@ -121,8 +125,8 @@ def main():
         first = None
         for date, key, sc, f in events[h]:
             if len(pool) >= 150:
-                lock = pool[int(len(pool) * 0.7)]
-                hold = pool[int(len(pool) * 0.3)]
+                lock = pool[int(len(pool) * g.LOCK_PERCENTILE[h])]
+                hold = pool[int(len(pool) * g.HOLD_PERCENTILE)]
                 b = ("LOCK" if sc >= lock else
                      "HOLD" if sc <= hold else "SPLIT")
                 if first is None:

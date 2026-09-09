@@ -129,6 +129,42 @@ check("label HOLD below default 30d hold threshold",
 check("label_for honors dynamic thresholds",
       g.label_for(55, 30, {30: {"lock": 54, "hold": 40},
                            60: {"lock": 62, "hold": 39}})[0] == "LOCK")
+check("SPLIT message is float/wait (no lock nudge)",
+      ("float" in g.MSG_SPLIT.lower() or "wait" in g.MSG_SPLIT.lower())
+      and "consider locking part" not in g.MSG_SPLIT.lower(),
+      g.MSG_SPLIT)
+check("LOCK percentile asymmetric: 30d stricter than 60d",
+      g.LOCK_PERCENTILE[30] > g.LOCK_PERCENTILE[60] >= 0.80)
+_v_ok = {"mean": 5.0, "hit": 0.70, "n": 100}
+_v_lo = {"mean": 1.0, "hit": 0.70, "n": 100}
+check("meets_lock_bar requires High + mean floor",
+      g.meets_lock_bar(_v_ok, "High", 60)
+      and not g.meets_lock_bar(_v_ok, "Medium", 60)
+      and not g.meets_lock_bar(_v_lo, "High", 60))
+# Monkeypatch VALIDATION briefly for apply_lock_bar unit behavior
+_old_val = g.VALIDATION
+g.VALIDATION = {
+    "pooled": {30: {"LOCK": {"mean": 1.0, "hit": 0.50, "n": 50},
+                    "SPLIT": {"mean": 0.5, "hit": 0.5, "n": 50},
+                    "HOLD": {"mean": -0.5, "hit": 0.4, "n": 50}},
+               60: {"LOCK": {"mean": 5.0, "hit": 0.70, "n": 80},
+                    "SPLIT": {"mean": 1.0, "hit": 0.55, "n": 80},
+                    "HOLD": {"mean": -1.0, "hit": 0.4, "n": 80}}},
+    "toy_strong": {60: {"LOCK": {"mean": 5.2, "hit": 0.72, "n": 40},
+                        "SPLIT": {"mean": 1.0, "hit": 0.55, "n": 40},
+                        "HOLD": {"mean": -1.0, "hit": 0.4, "n": 40}}},
+    "toy_weak": {30: {"LOCK": {"mean": 1.5, "hit": 0.55, "n": 40},
+                      "SPLIT": {"mean": 0.5, "hit": 0.5, "n": 40},
+                      "HOLD": {"mean": -0.5, "hit": 0.4, "n": 40}}},
+}
+_tag_w, _msg_w, _, _ = g.apply_lock_bar("LOCK", g.MSG_LOCK, "toy_weak", 30)
+check("apply_lock_bar downgrades weak 30d LOCK to SPLIT",
+      _tag_w == "SPLIT" and ("float" in _msg_w.lower() or "wait" in _msg_w.lower()),
+      f"{_tag_w} {_msg_w}")
+_tag_s, _msg_s, _, _ = g.apply_lock_bar("LOCK", g.MSG_LOCK, "toy_strong", 60)
+check("apply_lock_bar keeps strong 60d LOCK",
+      _tag_s == "LOCK", f"{_tag_s} {_msg_s}")
+g.VALIDATION = _old_val
 v, conf = g.validation_for("chuck_roll", 60, "LOCK")
 _want_hit = g.VALIDATION["chuck_roll"][60]["LOCK"]["hit"]
 _eff = _want_hit
