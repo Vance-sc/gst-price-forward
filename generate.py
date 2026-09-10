@@ -48,6 +48,7 @@ This tool is decision support for a vendor lock conversation, not a forecast.
 """
 
 import os
+import shutil
 import json
 import math
 import datetime as dt
@@ -677,6 +678,14 @@ def build(series, cutout, is_demo, warnings):
         json.dump(out, f, indent=2)
     with open(os.path.join(here, "index.html"), "w") as f:
         f.write(render_html(out))
+
+    # Stage SiteGround no-cache headers into public/ so FTPS mirror (public/ -> public_html/)
+    # ships them even if the workflow cp line is missing. HTML/JSON must not stick in Dynamic Cache.
+    _ht = os.path.join(here, ".htaccess")
+    if os.path.isfile(_ht):
+        _pub = os.path.join(here, "public")
+        os.makedirs(_pub, exist_ok=True)
+        shutil.copy2(_ht, os.path.join(_pub, ".htaccess"))
     return out
 
 
