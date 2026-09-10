@@ -164,7 +164,7 @@ HTML = r"""<!DOCTYPE html>
 <script>
 const D = window.APP_DATA;
 const fmt = (n)=> n==null? '—' : n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-const compColor = (v)=> v>=62?'var(--green)': v>=45?'var(--amber)':'var(--red)';
+const compColor = (v)=> v>=62?'#117b53': v>=45?'#d68a12':'#a6152e';
 const esc = (s)=> String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 document.getElementById('gen').innerHTML =
@@ -197,7 +197,7 @@ const order = Object.keys(D.products);
 function bar(v,label){
   return '<div class="bar" role="img" aria-label="'+label+' '+v+' of 100"><i></i><b style="width:'+v+'%;background:'+compColor(v)+'"></b></div>';
 }
-const sigColor = s => s==='LOCK'?'var(--green)': s==='SPLIT'?'var(--amber)':'var(--red)';
+const sigColor = s => s==='LOCK'?'#117b53': s==='SPLIT'?'#d68a12':'#a6152e';
 function hz(h,d){
   const c=d.components;
   const v=d.validation;
@@ -260,9 +260,9 @@ order.forEach((key,idx)=>{
       data:{labels,datasets:[
         {label:'Price',data:price,borderColor:'#1b1b1b',borderWidth:1.6,
           pointRadius:0,tension:.15},
-        {label:'SMA10',data:sma(price,10),borderColor:'var(--red)',borderWidth:1.2,
+        {label:'SMA10',data:sma(price,10),borderColor:'#a6152e',backgroundColor:'#a6152e',borderWidth:1.2,
           pointRadius:0,borderDash:[4,3],tension:.2},
-        {label:'SMA40',data:sma(price,40),borderColor:'var(--green)',borderWidth:1.2,
+        {label:'SMA40',data:sma(price,40),borderColor:'#117b53',backgroundColor:'#117b53',borderWidth:1.2,
           pointRadius:0,tension:.2},
       ]},
       options:{responsive:true,maintainAspectRatio:false,
