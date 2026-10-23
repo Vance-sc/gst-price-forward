@@ -179,6 +179,8 @@ check("validation: HOLD inverse hit -> confidence",
 v3_, conf3 = g.validation_for("shoulder_clod", 30, "LOCK")
 _clod_hit = g.VALIDATION["shoulder_clod"][30]["LOCK"]["hit"]
 _clod_conf = "High" if _clod_hit >= 0.65 else "Medium" if _clod_hit >= 0.55 else "Low"
+if _clod_conf == "High" and g.VALIDATION["shoulder_clod"][30]["LOCK"]["n"] < 25:
+    _clod_conf = "Medium"   # existing small-sample cap in validation_for
 check("validation: clod 30d LOCK confidence matches hit",
       conf3 == _clod_conf, f"{v3_} {conf3}")
 vp, _ = g.validation_for("nonexistent", 30, "SPLIT")
@@ -231,6 +233,48 @@ html = g.render_html({"meta": {"x": "</script><script>alert(1)</script>"},
                       "products": {}})
 check("render escapes </script>", "</script><script>alert(1)" not in html)
 check("render injects APP_DATA", "window.APP_DATA" in html)
+
+# ---------------------------------------------------------------- honest counts
+import backtest as _bt
+_d0 = _dt.date(2024, 1, 1)
+_evs = [(_d0 + _dt.timedelta(days=7 * k), float(k)) for k in range(20)]
+_ind30 = _bt.independent_events(_evs, 30)
+check("dedupe keeps events >= 30d apart",
+      all((b[0] - a[0]).days >= 30 for a, b in zip(_ind30, _ind30[1:])),
+      str(_ind30))
+check("dedupe count (weekly events, 30d -> every 5th)", len(_ind30) == 4,
+      str(len(_ind30)))
+check("dedupe 60d sparser than 30d",
+      len(_bt.independent_events(_evs, 60)) < len(_ind30))
+check("dedupe keeps first event", _ind30[0] == _evs[0])
+_st = _bt.stats([1.0, 2.0, 3.0, -1.0], [1.0, 3.0, -1.0])
+check("stats reports independent n/mean/hit/range",
+      _st["n"] == 4 and _st["n_indep"] == 3 and _st["mean_indep"] == 1.0
+      and abs(_st["hit_indep"] - 0.67) < 1e-9
+      and _st["ci80_indep"][0] <= 1.0 <= _st["ci80_indep"][1]
+      and _st["iqr_indep"] == [0.0, 2.0], str(_st))
+check("bootstrap deterministic", _bt.bootstrap_ci([1, 2, 5, 9]) ==
+      _bt.bootstrap_ci([1, 2, 5, 9]))
+
+# ---------------------------------------------------------------- falling guard
+_flat = [100.0] * 20
+check("guard passes flat", g.trend_ok(_flat, 19))
+_up = [100.0 + k for k in range(20)]
+check("guard passes rising", g.trend_ok(_up, 19))
+_fall = [100.0 - k for k in range(20)]
+check("guard blocks falling", not g.trend_ok(_fall, 19))
+# 10d down 3% but last 5d recovering +1%: still blocked (both must pass)
+_mix = [100.0] * 10 + [96.0] * 5 + [96.0, 96.3, 96.5, 96.7, 96.97]
+check("guard needs BOTH 5d and 10d", not g.trend_ok(_mix, 19),
+      str(g.short_term_returns(_mix, 19)))
+_edge = [100.0] * 15 + [99.5] * 5   # 5d 0%, 10d exactly -0.5% -> ok
+check("guard boundary -0.5% inclusive", g.trend_ok(_edge, 19),
+      str(g.short_term_returns(_edge, 19)))
+check("guard fails closed on short history", not g.trend_ok([100.0] * 5, 4))
+_t, _m, _v, _c = g.apply_lock_bar("LOCK", g.MSG_LOCK, "round", 60, False)
+check("apply_lock_bar: falling -> SPLIT", _t == "SPLIT" and _m == g.MSG_FALLING)
+_t2, *_r = g.apply_lock_bar("HOLD", g.MSG_HOLD, "round", 60, False)
+check("guard never touches non-LOCK", _t2 == "HOLD")
 
 print()
 if FAILS:

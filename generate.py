@@ -136,6 +136,13 @@ HOLD_PERCENTILE = 0.30
 # to SPLIT (float language). Applied after score labeling in analyze().
 LOCK_MIN_MEAN = {30: 3.5, 60: 4.0}   # ~4–5% bar; 30d floor = hardened pooled edge
 LOCK_MIN_HIT = 0.65                 # High confidence (same cutoff as conf label)
+# Still-falling guard: no LOCK unless the short-term trend has stopped
+# dropping. Both the 5- and 10-trading-day price returns must be >= this
+# floor (percent). Applied live (apply_lock_bar) and in backtest.py.
+FALLING_GUARD_WINDOWS = (5, 10)
+FALLING_GUARD_MIN_PCT = -0.5
+MSG_FALLING = ("Cheap, but price is still falling — wait for the drop to "
+               "stop before locking")
 # Static fallback only if history is too thin (raised with the harder bar).
 DEFAULT_THRESHOLDS = {30: {"lock": 68.0, "hold": 40.0},
                       60: {"lock": 66.0, "hold": 39.5}}
@@ -151,30 +158,35 @@ MSG_HOLD = "Rich vs cutout / post-rally — wait"
 # a LOW hit rate is good — you were waiting). Regenerate via backtest.py
 # after any model change. Numbers below are percentile-policy OOS; live
 # LOCK is further gated by apply_lock_bar() (Vance ~4–5% / High conf bar).
+# Regenerated with the still-falling guard ON (10y history, 2026-10-23).
+# n/mean/hit = all decision days (overlapping windows); *_indep = events
+# >= h days apart per product (honest count); iqr_indep = 25th-75th pct of
+# independent returns; ci80_indep = bootstrap 80% interval of their mean.
+# The lock gate still reads mean/hit (unchanged logic).
 VALIDATION = {
  'pooled': {
-  30: {'LOCK': {'mean': 3.51, 'hit': 0.66, 'n': 200}, 'SPLIT': {'mean': 1.14, 'hit': 0.57, 'n': 1088}, 'HOLD': {'mean': -0.56, 'hit': 0.43, 'n': 564}},
-  60: {'LOCK': {'mean': 4.92, 'hit': 0.7, 'n': 298}, 'SPLIT': {'mean': 2.54, 'hit': 0.59, 'n': 976}, 'HOLD': {'mean': -1.78, 'hit': 0.4, 'n': 557}}
+  30: {'LOCK': {'mean': 4.6, 'hit': 0.78, 'n': 37, 'n_indep': 32, 'mean_indep': 4.62, 'hit_indep': 0.78, 'iqr_indep': [0.36, 8.46], 'ci80_indep': [2.94, 6.3]}, 'SPLIT': {'mean': 1.42, 'hit': 0.58, 'n': 1232, 'n_indep': 302, 'mean_indep': 0.65, 'hit_indep': 0.54, 'iqr_indep': [-3.45, 4.43], 'ci80_indep': [-0.02, 1.3]}, 'HOLD': {'mean': -0.91, 'hit': 0.43, 'n': 583, 'n_indep': 172, 'mean_indep': 0.32, 'hit_indep': 0.48, 'iqr_indep': [-3.99, 3.35], 'ci80_indep': [-0.47, 1.06]}},
+  60: {'LOCK': {'mean': 4.01, 'hit': 0.69, 'n': 83, 'n_indep': 43, 'mean_indep': 3.7, 'hit_indep': 0.67, 'iqr_indep': [-1.77, 9.85], 'ci80_indep': [2.22, 5.14]}, 'SPLIT': {'mean': 3.01, 'hit': 0.62, 'n': 1191, 'n_indep': 179, 'mean_indep': 1.7, 'hit_indep': 0.6, 'iqr_indep': [-3.41, 7.65], 'ci80_indep': [0.54, 2.76]}, 'HOLD': {'mean': -2.12, 'hit': 0.39, 'n': 557, 'n_indep': 107, 'mean_indep': 0.35, 'hit_indep': 0.46, 'iqr_indep': [-5.07, 5.24], 'ci80_indep': [-1.18, 1.71]}}
  },
  'chuck_roll': {
-  30: {'LOCK': {'mean': 1.76, 'hit': 0.64, 'n': 39}, 'SPLIT': {'mean': 1.77, 'hit': 0.57, 'n': 221}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 111}},
-  60: {'LOCK': {'mean': 3.54, 'hit': 0.6, 'n': 67}, 'SPLIT': {'mean': 4.38, 'hit': 0.63, 'n': 187}, 'HOLD': {'mean': -3.02, 'hit': 0.35, 'n': 113}}
+  30: {'LOCK': {'mean': 3.65, 'hit': 0.71, 'n': 7, 'n_indep': 7, 'mean_indep': 3.65, 'hit_indep': 0.71, 'iqr_indep': [-0.16, 7.03], 'ci80_indep': [1.17, 6.35]}, 'SPLIT': {'mean': 1.89, 'hit': 0.57, 'n': 250, 'n_indep': 58, 'mean_indep': 0.69, 'hit_indep': 0.47, 'iqr_indep': [-3.89, 5.13], 'ci80_indep': [-0.81, 2.16]}, 'HOLD': {'mean': -0.65, 'hit': 0.47, 'n': 113, 'n_indep': 33, 'mean_indep': 1.18, 'hit_indep': 0.55, 'iqr_indep': [-6.8, 7.61], 'ci80_indep': [-1.31, 3.64]}},
+  60: {'LOCK': {'mean': 2.96, 'hit': 0.58, 'n': 19, 'n_indep': 9, 'mean_indep': 4.99, 'hit_indep': 0.67, 'iqr_indep': [-1.02, 10.49], 'ci80_indep': [1.68, 8.31]}, 'SPLIT': {'mean': 4.58, 'hit': 0.66, 'n': 237, 'n_indep': 35, 'mean_indep': 3.26, 'hit_indep': 0.63, 'iqr_indep': [-3.33, 9.8], 'ci80_indep': [0.36, 6.06]}, 'HOLD': {'mean': -3.25, 'hit': 0.35, 'n': 110, 'n_indep': 19, 'mean_indep': 2.19, 'hit_indep': 0.47, 'iqr_indep': [-6.38, 7.14], 'ci80_indep': [-1.31, 5.7]}}
  },
  'flap': {
-  30: {'LOCK': {'mean': 6.57, 'hit': 0.7, 'n': 47}, 'SPLIT': {'mean': 0.38, 'hit': 0.53, 'n': 204}, 'HOLD': {'mean': -0.45, 'hit': 0.49, 'n': 118}},
-  60: {'LOCK': {'mean': 6.66, 'hit': 0.75, 'n': 65}, 'SPLIT': {'mean': 2.16, 'hit': 0.6, 'n': 182}, 'HOLD': {'mean': -2.06, 'hit': 0.42, 'n': 118}}
+  30: {'LOCK': {'mean': 7.05, 'hit': 0.86, 'n': 7, 'n_indep': 6, 'mean_indep': 8.1, 'hit_indep': 0.83, 'iqr_indep': [0.75, 8.3], 'ci80_indep': [2.42, 14.23]}, 'SPLIT': {'mean': 1.32, 'hit': 0.56, 'n': 249, 'n_indep': 61, 'mean_indep': -0.09, 'hit_indep': 0.51, 'iqr_indep': [-5.07, 5.07], 'ci80_indep': [-1.29, 1.07]}, 'HOLD': {'mean': -1.02, 'hit': 0.47, 'n': 114, 'n_indep': 34, 'mean_indep': 0.18, 'hit_indep': 0.47, 'iqr_indep': [-4.66, 4.53], 'ci80_indep': [-1.38, 1.66]}},
+  60: {'LOCK': {'mean': 2.7, 'hit': 0.56, 'n': 18, 'n_indep': 9, 'mean_indep': 3.5, 'hit_indep': 0.56, 'iqr_indep': [-2.79, 8.18], 'ci80_indep': [-0.32, 7.23]}, 'SPLIT': {'mean': 3.23, 'hit': 0.64, 'n': 233, 'n_indep': 36, 'mean_indep': 0.97, 'hit_indep': 0.58, 'iqr_indep': [-5.25, 9.13], 'ci80_indep': [-1.47, 3.22]}, 'HOLD': {'mean': -2.66, 'hit': 0.38, 'n': 115, 'n_indep': 21, 'mean_indep': -0.73, 'hit_indep': 0.38, 'iqr_indep': [-5.86, 6.29], 'ci80_indep': [-3.53, 2.14]}}
  },
  'shoulder_clod': {
-  30: {'LOCK': {'mean': 1.95, 'hit': 0.61, 'n': 38}, 'SPLIT': {'mean': 1.64, 'hit': 0.59, 'n': 209}, 'HOLD': {'mean': -0.4, 'hit': 0.38, 'n': 124}},
-  60: {'LOCK': {'mean': 3.12, 'hit': 0.63, 'n': 62}, 'SPLIT': {'mean': 3.06, 'hit': 0.62, 'n': 181}, 'HOLD': {'mean': -0.67, 'hit': 0.41, 'n': 123}}
+  30: {'LOCK': {'mean': 4.95, 'hit': 0.67, 'n': 6, 'n_indep': 5, 'mean_indep': 4.44, 'hit_indep': 0.6, 'iqr_indep': [-1.3, 9.37], 'ci80_indep': [1.28, 7.42]}, 'SPLIT': {'mean': 1.9, 'hit': 0.6, 'n': 241, 'n_indep': 64, 'mean_indep': 1.61, 'hit_indep': 0.55, 'iqr_indep': [-2.37, 2.92], 'ci80_indep': [-0.21, 3.56]}, 'HOLD': {'mean': -1.14, 'hit': 0.38, 'n': 124, 'n_indep': 38, 'mean_indep': 0.34, 'hit_indep': 0.5, 'iqr_indep': [-2.05, 2.66], 'ci80_indep': [-1.3, 2.02]}},
+  60: {'LOCK': {'mean': 2.72, 'hit': 0.57, 'n': 14, 'n_indep': 7, 'mean_indep': -0.75, 'hit_indep': 0.43, 'iqr_indep': [-4.39, 2.99], 'ci80_indep': [-3.03, 1.66]}, 'SPLIT': {'mean': 2.93, 'hit': 0.64, 'n': 236, 'n_indep': 36, 'mean_indep': 1.71, 'hit_indep': 0.67, 'iqr_indep': [-0.62, 5.01], 'ci80_indep': [-0.58, 3.95]}, 'HOLD': {'mean': -1.04, 'hit': 0.46, 'n': 116, 'n_indep': 24, 'mean_indep': -0.05, 'hit_indep': 0.46, 'iqr_indep': [-4.39, 4.04], 'ci80_indep': [-4.82, 4.63]}}
  },
  'short_rib': {
-  30: {'LOCK': {'mean': 2.21, 'hit': 0.53, 'n': 38}, 'SPLIT': {'mean': 0.69, 'hit': 0.53, 'n': 228}, 'HOLD': {'mean': -0.51, 'hit': 0.42, 'n': 104}},
-  60: {'LOCK': {'mean': 3.43, 'hit': 0.62, 'n': 53}, 'SPLIT': {'mean': 1.09, 'hit': 0.54, 'n': 212}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 101}}
+  30: {'LOCK': {'mean': 4.27, 'hit': 0.78, 'n': 9, 'n_indep': 7, 'mean_indep': 3.26, 'hit_indep': 0.71, 'iqr_indep': [-2.13, 7.3], 'ci80_indep': [-0.53, 7.04]}, 'SPLIT': {'mean': 0.64, 'hit': 0.54, 'n': 247, 'n_indep': 61, 'mean_indep': 0.96, 'hit_indep': 0.61, 'iqr_indep': [-3.35, 3.82], 'ci80_indep': [-0.17, 2.07]}, 'HOLD': {'mean': -0.89, 'hit': 0.41, 'n': 114, 'n_indep': 34, 'mean_indep': -0.85, 'hit_indep': 0.41, 'iqr_indep': [-3.96, 2.0], 'ci80_indep': [-1.97, 0.18]}},
+  60: {'LOCK': {'mean': 4.03, 'hit': 0.73, 'n': 15, 'n_indep': 8, 'mean_indep': 1.23, 'hit_indep': 0.62, 'iqr_indep': [-5.11, 6.68], 'ci80_indep': [-2.19, 4.52]}, 'SPLIT': {'mean': 1.23, 'hit': 0.52, 'n': 250, 'n_indep': 36, 'mean_indep': 1.91, 'hit_indep': 0.53, 'iqr_indep': [-3.32, 7.15], 'ci80_indep': [0.09, 3.87]}, 'HOLD': {'mean': -0.99, 'hit': 0.45, 'n': 101, 'n_indep': 23, 'mean_indep': -0.2, 'hit_indep': 0.43, 'iqr_indep': [-4.85, 5.14], 'ci80_indep': [-2.4, 2.05]}}
  },
  'round': {
-  30: {'LOCK': {'mean': 4.38, 'hit': 0.79, 'n': 38}, 'SPLIT': {'mean': 1.22, 'hit': 0.61, 'n': 226}, 'HOLD': {'mean': -0.68, 'hit': 0.41, 'n': 107}},
-  60: {'LOCK': {'mean': 8.25, 'hit': 0.96, 'n': 51}, 'SPLIT': {'mean': 2.26, 'hit': 0.57, 'n': 214}, 'HOLD': {'mean': -2.41, 'hit': 0.38, 'n': 102}}
+  30: {'LOCK': {'mean': 3.42, 'hit': 0.88, 'n': 8, 'n_indep': 7, 'mean_indep': 4.12, 'hit_indep': 1.0, 'iqr_indep': [1.03, 6.62], 'ci80_indep': [2.5, 5.76]}, 'SPLIT': {'mean': 1.38, 'hit': 0.62, 'n': 245, 'n_indep': 58, 'mean_indep': 0.01, 'hit_indep': 0.55, 'iqr_indep': [-2.05, 4.14], 'ci80_indep': [-1.43, 1.33]}, 'HOLD': {'mean': -0.82, 'hit': 0.4, 'n': 118, 'n_indep': 33, 'mean_indep': 0.78, 'hit_indep': 0.48, 'iqr_indep': [-2.56, 3.34], 'ci80_indep': [-0.94, 2.7]}},
+  60: {'LOCK': {'mean': 7.61, 'hit': 1.0, 'n': 17, 'n_indep': 10, 'mean_indep': 7.81, 'hit_indep': 1.0, 'iqr_indep': [3.11, 11.85], 'ci80_indep': [5.62, 10.17]}, 'SPLIT': {'mean': 3.16, 'hit': 0.66, 'n': 235, 'n_indep': 36, 'mean_indep': 0.69, 'hit_indep': 0.58, 'iqr_indep': [-3.47, 8.04], 'ci80_indep': [-1.74, 2.97]}, 'HOLD': {'mean': -2.56, 'hit': 0.31, 'n': 115, 'n_indep': 20, 'mean_indep': 0.83, 'hit_indep': 0.55, 'iqr_indep': [-4.44, 5.24], 'ci80_indep': [-1.76, 3.51]}}
  }
 }
 PUBLISH_POINTS = 270
@@ -521,11 +533,36 @@ def meets_lock_bar(vstats, conf, horizon_days):
     return True
 
 
-def apply_lock_bar(tag, msg, key, horizon_days):
-    """Downgrade score-based LOCK to SPLIT unless validated bar is met.
-    Soft SPLIT must not nudge locking — float/wait language only."""
+def short_term_returns(prices, i):
+    """{window: % return from i-window to i} for FALLING_GUARD_WINDOWS
+    (None where history is too short). Trailing data only."""
+    out = {}
+    for w in FALLING_GUARD_WINDOWS:
+        if i - w >= 0 and prices[i - w]:
+            out[w] = (prices[i] - prices[i - w]) / prices[i - w] * 100
+        else:
+            out[w] = None
+    return out
+
+
+def trend_ok(prices, i):
+    """True when the price is flat or up over every guard window
+    (each return >= FALLING_GUARD_MIN_PCT). Missing history -> False
+    (fail closed: no LOCK without evidence the drop has stopped)."""
+    rets = short_term_returns(prices, i)
+    return all(r is not None and r >= FALLING_GUARD_MIN_PCT
+               for r in rets.values())
+
+
+def apply_lock_bar(tag, msg, key, horizon_days, trend_is_ok=True):
+    """Downgrade score-based LOCK to SPLIT unless validated bar is met
+    and the still-falling guard passes. Soft SPLIT must not nudge
+    locking — float/wait language only."""
     if tag != "LOCK":
         return tag, msg, *validation_for(key, horizon_days, tag)
+    if not trend_is_ok:
+        v2, conf2 = validation_for(key, horizon_days, "SPLIT")
+        return "SPLIT", MSG_FALLING, v2, conf2
     vstats, conf = validation_for(key, horizon_days, "LOCK")
     if meets_lock_bar(vstats, conf, horizon_days):
         return "LOCK", MSG_LOCK, vstats, conf
@@ -581,13 +618,17 @@ def analyze(series, cutout):
         vol = volatility(prices)
         horizons = {}
         usable = True
+        st_rets = short_term_returns(prices, len(prices) - 1)
+        guard_ok = trend_ok(prices, len(prices) - 1)
         for h in (30, 60):
             score, detail = score_at(F, len(pts) - 1, h)
             if score is None:
                 usable = False
                 break
             tag, msg = label_for(score, h, thresholds)
-            tag, msg, vstats, conf = apply_lock_bar(tag, msg, key, h)
+            score_tag = tag
+            tag, msg, vstats, conf = apply_lock_bar(tag, msg, key, h,
+                                                    guard_ok)
             horizons[h] = {
                 "score": round(score, 1),
                 "signal": tag, "message": msg,
@@ -597,6 +638,14 @@ def analyze(series, cutout):
                 "detail": detail,
                 "confidence": conf,
                 "validation": vstats,
+                "score_signal": score_tag,
+                "falling_guard": {
+                    "ok": guard_ok,
+                    "min_pct": FALLING_GUARD_MIN_PCT,
+                    "returns_pct": {str(w): (round(r, 2) if r is not None
+                                             else None)
+                                    for w, r in st_rets.items()},
+                },
             }
         if not usable:
             continue

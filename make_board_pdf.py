@@ -161,12 +161,19 @@ def card(ix, key):
                  f"'18-'26: {'+' if v['mean'] >= 0 else ''}{v['mean']}% fwd, "
                  f"hit {round(v['hit'] * 100)}% (n={v['n']})",
                  size=6, color=MUTED)
+            if v.get("n_indep"):
+                ci = v.get("ci80_indep")
+                text(bx, by - 0.051,
+                     f"indep n={v['n_indep']} avg "
+                     f"{'+' if v['mean_indep'] >= 0 else ''}{v['mean_indep']}%"
+                     + (f" (80%: {ci[0]}..{ci[1]})" if ci else ""),
+                     size=6, color=MUTED)
         comp = hz["components"]
         for ci, (lbl, ck) in enumerate([("RelVal", "rel_value"),
                                         ("Mom†", "momentum"),
                                         ("Vol", "volume"),
                                         ("C/S", "cs_spread")]):
-            cy = by - 0.055 - ci * 0.0085
+            cy = by - 0.068 - ci * 0.0085
             text(bx, cy + 0.004, lbl, size=5.5, color=MUTED)
             val = comp[ck]
             # high component value = favorable to lock = green (flipped

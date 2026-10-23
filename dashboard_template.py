@@ -202,14 +202,22 @@ function hz(h,d){
   const c=d.components;
   const v=d.validation;
   const vline = v ? '<div class="conf">Walk-forward ’18-’26: this bucket averaged <b>'+
-    (v.mean>=0?'+':'')+v.mean+'%</b> fwd, price rose '+Math.round(v.hit*100)+'% of days (n='+v.n+')</div>' : '';
+    (v.mean>=0?'+':'')+v.mean+'%</b> fwd, price rose '+Math.round(v.hit*100)+'% of days (n='+v.n+')</div>' +
+    (v.n_indep ? '<div class="conf">Independent events: <b>'+v.n_indep+'</b> · avg '+
+      (v.mean_indep>=0?'+':'')+v.mean_indep+'%, rose '+Math.round(v.hit_indep*100)+'%'+
+      (v.ci80_indep ? ' · 80% range of avg '+v.ci80_indep[0]+'% to '+v.ci80_indep[1]+'%' : '')+
+      (v.iqr_indep ? ' · middle half of events '+v.iqr_indep[0]+'% to '+v.iqr_indep[1]+'%' : '')+'</div>' : '')
+    : '';
+  const fg=d.falling_guard;
+  const gline = (fg && d.score_signal==='LOCK' && !fg.ok) ? '<div class="conf"><b>Still falling:</b> 5d '+
+    fg.returns_pct['5']+'%, 10d '+fg.returns_pct['10']+'% (need both ≥ '+fg.min_pct+'%) — LOCK held back</div>' : '';
   return '<div class="hz">'+
     '<div class="hz-ttl">'+h+'-Day Outlook</div>'+
     '<div class="hz-sig"><span class="score" style="color:'+sigColor(d.signal)+'">'+d.score+'</span>'+
        '<span class="pill b-'+d.signal+'">'+d.signal+'</span></div>'+
     '<div class="hz-msg">'+esc(d.message)+'</div>'+
     '<div class="conf">Confidence: <b>'+esc(d.confidence)+'</b> (validated hit rate)</div>'+
-    vline+
+    vline+gline+
     '<div class="comp">'+
       '<div class="comprow"><span class="lbl">Rel value</span>'+bar(c.rel_value,'Relative value')+'<span class="val">'+c.rel_value+'</span></div>'+
       '<div class="comprow"><span class="lbl">Momentum&#8224;</span>'+bar(c.momentum,'Contrarian momentum')+'<span class="val">'+c.momentum+'</span></div>'+
