@@ -135,12 +135,31 @@ check("SPLIT message is float/wait (no lock nudge)",
       g.MSG_SPLIT)
 check("LOCK percentile asymmetric: 30d stricter than 60d",
       g.LOCK_PERCENTILE[30] > g.LOCK_PERCENTILE[60] >= 0.80)
-_v_ok = {"mean": 5.0, "hit": 0.70, "n": 100}
-_v_lo = {"mean": 1.0, "hit": 0.70, "n": 100}
+_v_ok = {"mean": 5.0, "hit": 0.70, "n": 100, "n_indep": 10, "mean_indep": 5.0, "hit_indep": 0.70, "ci80_indep": [1.0, 9.0]}
+_v_lo = dict(_v_ok, mean_indep=1.0)
 check("meets_lock_bar requires High + mean floor",
       g.meets_lock_bar(_v_ok, "High", 60)
       and not g.meets_lock_bar(_v_ok, "Medium", 60)
       and not g.meets_lock_bar(_v_lo, "High", 60))
+# independent-event gate
+check("gate ignores overlapping mean/hit (uses indep)",
+      g.meets_lock_bar(dict(_v_ok, mean=0.1, hit=0.1), "High", 60)
+      and not g.meets_lock_bar(dict(_v_ok, mean=9.0, hit=0.99,
+                                    mean_indep=2.0), "High", 60))
+check("gate needs n_indep >= LOCK_MIN_N_INDEP",
+      g.meets_lock_bar(dict(_v_ok, n_indep=g.LOCK_MIN_N_INDEP), "High", 60)
+      and not g.meets_lock_bar(dict(_v_ok, n_indep=g.LOCK_MIN_N_INDEP - 1),
+                               "High", 60))
+check("gate needs hit_indep >= LOCK_MIN_HIT",
+      not g.meets_lock_bar(dict(_v_ok, hit_indep=0.60), "High", 60))
+check("gate needs ci80 low > 0",
+      not g.meets_lock_bar(dict(_v_ok, ci80_indep=[-0.2, 9.0]), "High", 60)
+      and not g.meets_lock_bar(dict(_v_ok, ci80_indep=None), "High", 60))
+check("gate fails closed without indep stats",
+      not g.meets_lock_bar({"mean": 9.0, "hit": 0.9, "n": 100}, "High", 60))
+check("30d mean floor 3.5 on indep",
+      g.meets_lock_bar(dict(_v_ok, mean_indep=3.5), "High", 30)
+      and not g.meets_lock_bar(dict(_v_ok, mean_indep=3.4), "High", 30))
 # Monkeypatch VALIDATION briefly for apply_lock_bar unit behavior
 _old_val = g.VALIDATION
 g.VALIDATION = {
@@ -150,10 +169,12 @@ g.VALIDATION = {
                60: {"LOCK": {"mean": 5.0, "hit": 0.70, "n": 80},
                     "SPLIT": {"mean": 1.0, "hit": 0.55, "n": 80},
                     "HOLD": {"mean": -1.0, "hit": 0.4, "n": 80}}},
-    "toy_strong": {60: {"LOCK": {"mean": 5.2, "hit": 0.72, "n": 40},
+    "toy_strong": {60: {"LOCK": {"mean": 5.2, "hit": 0.72, "n": 40, "n_indep": 10, "mean_indep": 5.0, "hit_indep": 0.70, "ci80_indep": [1.0, 9.0]},
                         "SPLIT": {"mean": 1.0, "hit": 0.55, "n": 40},
                         "HOLD": {"mean": -1.0, "hit": 0.4, "n": 40}}},
-    "toy_weak": {30: {"LOCK": {"mean": 1.5, "hit": 0.55, "n": 40},
+    "toy_weak": {30: {"LOCK": {"mean": 1.5, "hit": 0.55, "n": 40,
+                               "n_indep": 10, "mean_indep": 1.5,
+                               "hit_indep": 0.55, "ci80_indep": [-1, 4]},
                       "SPLIT": {"mean": 0.5, "hit": 0.5, "n": 40},
                       "HOLD": {"mean": -0.5, "hit": 0.4, "n": 40}}},
 }
@@ -166,21 +187,26 @@ check("apply_lock_bar keeps strong 60d LOCK",
       _tag_s == "LOCK", f"{_tag_s} {_msg_s}")
 g.VALIDATION = _old_val
 v, conf = g.validation_for("chuck_roll", 60, "LOCK")
-_want_hit = g.VALIDATION["chuck_roll"][60]["LOCK"]["hit"]
+_want_hit = g.VALIDATION["chuck_roll"][60]["LOCK"]["hit_indep"]
 _eff = _want_hit
 _want_conf = "High" if _eff >= 0.65 else "Medium" if _eff >= 0.55 else "Low"
-check("validation lookup: chuck_roll 60d LOCK matches VALIDATION",
-      v["hit"] == _want_hit and conf == _want_conf, f"{v} {conf}")
+if _want_conf == "High" and g.VALIDATION["chuck_roll"][60]["LOCK"]["n_indep"] < g.LOCK_MIN_N_INDEP:
+    _want_conf = "Medium"
+check("validation lookup: chuck_roll 60d LOCK conf from hit_indep",
+      v["hit_indep"] == _want_hit and conf == _want_conf, f"{v} {conf}")
+check("LOCK conf capped below LOCK_MIN_N_INDEP",
+      g.validation_for("flap", 30, "LOCK")[1] != "High"
+      or g.VALIDATION["flap"][30]["LOCK"]["n_indep"] >= g.LOCK_MIN_N_INDEP)
 v2_, conf2 = g.validation_for("chuck_roll", 60, "HOLD")
 _hold_hit = g.VALIDATION["chuck_roll"][60]["HOLD"]["hit"]
 _hold_conf = "High" if (1 - _hold_hit) >= 0.65 else "Medium" if (1 - _hold_hit) >= 0.55 else "Low"
 check("validation: HOLD inverse hit -> confidence",
       conf2 == _hold_conf, f"{v2_} {conf2}")
 v3_, conf3 = g.validation_for("shoulder_clod", 30, "LOCK")
-_clod_hit = g.VALIDATION["shoulder_clod"][30]["LOCK"]["hit"]
+_clod_hit = g.VALIDATION["shoulder_clod"][30]["LOCK"]["hit_indep"]
 _clod_conf = "High" if _clod_hit >= 0.65 else "Medium" if _clod_hit >= 0.55 else "Low"
-if _clod_conf == "High" and g.VALIDATION["shoulder_clod"][30]["LOCK"]["n"] < 25:
-    _clod_conf = "Medium"   # existing small-sample cap in validation_for
+if _clod_conf == "High" and g.VALIDATION["shoulder_clod"][30]["LOCK"]["n_indep"] < g.LOCK_MIN_N_INDEP:
+    _clod_conf = "Medium"   # small-sample cap on independent events
 check("validation: clod 30d LOCK confidence matches hit",
       conf3 == _clod_conf, f"{v3_} {conf3}")
 vp, _ = g.validation_for("nonexistent", 30, "SPLIT")

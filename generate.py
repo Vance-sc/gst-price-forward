@@ -136,6 +136,14 @@ HOLD_PERCENTILE = 0.30
 # to SPLIT (float language). Applied after score labeling in analyze().
 LOCK_MIN_MEAN = {30: 3.5, 60: 4.0}   # ~4–5% bar; 30d floor = hardened pooled edge
 LOCK_MIN_HIT = 0.65                 # High confidence (same cutoff as conf label)
+# The lock gate reads INDEPENDENT-event stats (events >= h days apart, from
+# backtest.py), not overlapping decision days. Need at least this many
+# independent LOCK events: 7 means a 65% hit bar requires >= 5 of 7 wins
+# (6 would allow 4 of 6); 8+ currently gates every product out.
+LOCK_MIN_N_INDEP = 7
+# And the low end of the bootstrap 80% interval of the independent mean
+# must be above this (percent): the edge must be positive, not just the avg.
+LOCK_MIN_CI80_LO = 0.0
 # Still-falling guard: no LOCK unless the short-term trend has stopped
 # dropping. Both the 5- and 10-trading-day price returns must be >= this
 # floor (percent). Applied live (apply_lock_bar) and in backtest.py.
@@ -503,32 +511,44 @@ def label_for(score, horizon_days, thresholds=None):
 
 
 def validation_for(key, horizon_days, signal):
-    """Out-of-sample stats for this product+horizon+bucket (pooled fallback)."""
+    """Out-of-sample stats for this product+horizon+bucket (pooled fallback).
+    LOCK confidence uses independent-event stats (hit_indep / n_indep)."""
     h = 30 if horizon_days <= 30 else 60
     v = VALIDATION.get(key, {}).get(h, {}).get(signal) \
         or VALIDATION["pooled"][h].get(signal)
     if not v:
         return None, "Low"
-    # Confidence from validated hit rate. For HOLD, a LOW hit rate is good
-    # (you wanted the price to fall while you waited).
-    eff = (1 - v["hit"]) if signal == "HOLD" else \
-        (v["hit"] if signal == "LOCK" else 0.5)
+    if signal == "LOCK":
+        if "hit_indep" not in v:
+            return v, "Low"          # fail closed: no honest counts
+        eff, n = v["hit_indep"], v["n_indep"]
+        min_n = LOCK_MIN_N_INDEP
+    else:
+        # Confidence from validated hit rate. For HOLD, a LOW hit rate is
+        # good (you wanted the price to fall while you waited).
+        eff = (1 - v["hit"]) if signal == "HOLD" else 0.5
+        n, min_n = v["n"], 25
     conf = "High" if eff >= 0.65 else "Medium" if eff >= 0.55 else "Low"
-    if v["n"] < 25 and conf == "High":
+    if n < min_n and conf == "High":
         conf = "Medium"
     return v, conf
 
 
 def meets_lock_bar(vstats, conf, horizon_days):
-    """Vance bar: ~4–5% expected upside with High confidence."""
+    """Vance bar: ~4-5% expected upside with High confidence, judged on
+    INDEPENDENT events: n_indep >= LOCK_MIN_N_INDEP, mean_indep >=
+    LOCK_MIN_MEAN, hit_indep >= LOCK_MIN_HIT, ci80 low > LOCK_MIN_CI80_LO."""
     h = 30 if horizon_days <= 30 else 60
-    if not vstats:
+    if not vstats or conf != "High" or "n_indep" not in vstats:
         return False
-    if conf != "High":
+    if vstats["n_indep"] < LOCK_MIN_N_INDEP:
         return False
-    if vstats.get("hit", 0) < LOCK_MIN_HIT:
+    if vstats.get("hit_indep", 0) < LOCK_MIN_HIT:
         return False
-    if vstats.get("mean", 0) < LOCK_MIN_MEAN[h]:
+    if vstats.get("mean_indep", 0) < LOCK_MIN_MEAN[h]:
+        return False
+    ci = vstats.get("ci80_indep")
+    if not ci or ci[0] <= LOCK_MIN_CI80_LO:
         return False
     return True
 
