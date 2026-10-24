@@ -157,9 +157,10 @@ check("gate needs ci80 low > 0",
       and not g.meets_lock_bar(dict(_v_ok, ci80_indep=None), "High", 60))
 check("gate fails closed without indep stats",
       not g.meets_lock_bar({"mean": 9.0, "hit": 0.9, "n": 100}, "High", 60))
-check("30d mean floor 3.5 on indep",
-      g.meets_lock_bar(dict(_v_ok, mean_indep=3.5), "High", 30)
-      and not g.meets_lock_bar(dict(_v_ok, mean_indep=3.4), "High", 30))
+check("30d mean floor 4.0 on indep",
+      g.LOCK_MIN_MEAN[30] == 4.0
+      and g.meets_lock_bar(dict(_v_ok, mean_indep=4.0), "High", 30)
+      and not g.meets_lock_bar(dict(_v_ok, mean_indep=3.9), "High", 30))
 # Monkeypatch VALIDATION briefly for apply_lock_bar unit behavior
 _old_val = g.VALIDATION
 g.VALIDATION = {

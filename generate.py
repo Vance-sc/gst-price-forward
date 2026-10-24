@@ -134,7 +134,7 @@ LOCK_PERCENTILE = {30: 0.88, 60: 0.82}
 HOLD_PERCENTILE = 0.30
 # Keep LOCK only when validated OOS mean/hit meet the bar; else downgrade
 # to SPLIT (float language). Applied after score labeling in analyze().
-LOCK_MIN_MEAN = {30: 3.5, 60: 4.0}   # ~4–5% bar; 30d floor = hardened pooled edge
+LOCK_MIN_MEAN = {30: 4.0, 60: 4.0}   # Vance bar: >=4% expected upside at both horizons
 LOCK_MIN_HIT = 0.65                 # High confidence (same cutoff as conf label)
 # The lock gate reads INDEPENDENT-event stats (events >= h days apart, from
 # backtest.py), not overlapping decision days. Need at least this many
