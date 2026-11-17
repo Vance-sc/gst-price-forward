@@ -132,7 +132,7 @@ Live fetches retry HTTP 5xx and timeouts with exponential backoff
 | `call_board.py` | **Experimental / local only** — momentum override PDF; not CI |
 | `backtest.py` | Walk-forward backtest of the Lock Score (run locally) |
 | `.github/workflows/update.yml` | Weekday CI → GitHub Pages (+ optional SiteGround FTPS), with a same-day retry |
-| `.github/workflows/keepalive.yml` | Monthly re-enable of the scheduled workflows |
+| `.github/workflows/keepalive.yml` | Weekly re-enable of the scheduled workflows; commits on main only after 45 quiet days |
 | `gst_private.py` | **Local only, gitignored** — confidential sales/margin/cost overlay |
 
 `generate.py` is standard-library only. PDF scripts need `matplotlib` (CI
@@ -203,11 +203,12 @@ Custom domain**, then add the CNAME GitHub shows at your DNS registrar.
 `PUBLIC_BUILD=1` never publishes DEMO data. If USDA is still down after the
 retries, the job stays green, writes a warning, and skips Pages and
 SiteGround so the last good board stays up. `FORCE_DEMO=1` together with
-`PUBLIC_BUILD` still exits with an error. `.github/workflows/keepalive.yml`
-re-enables the scheduled workflows once a month so a 60-day quiet stretch
-on this public repo does not leave them switched off. A workflow GitHub has
-already disabled will not start itself; after that happens, enable it once
-from the Actions tab.
+`PUBLIC_BUILD` still exits with an error. `.github/workflows/keepalive.yml` re-enables the scheduled workflows
+every week. If the latest commit on main is older than 45 days, that run
+also pushes a `.github/keepalive` timestamp so the 60-day inactivity
+disable does not recur. `update.yml` has no push trigger, so the commit
+does not rebuild the board. A workflow GitHub has already disabled will
+not start itself; after that happens, enable it once from the Actions tab.
 
 ---
 

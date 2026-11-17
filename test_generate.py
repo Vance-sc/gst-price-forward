@@ -654,10 +654,22 @@ check("update workflow has a same-day retry cron",
 check("update workflow skips deploy when USDA is down or board is current",
       ".usda_skip" in _upd and "freshness" in _upd
       and "steps.build.outputs.skip != 'true'" in _upd)
+check("update workflow has no push trigger",
+      "push:" not in _upd and "pull_request:" not in _upd)
 check("keepalive enables both workflows with the Actions API",
-      "actions: write" in _ka and "/enable" in _ka
+      "actions: write" in _ka and "contents: write" in _ka
+      and "/enable" in _ka
       and "update.yml" in _ka and "keepalive.yml" in _ka
       and "uses:" not in _ka and "workflow_dispatch" in _ka)
+check("keepalive is weekly and commits only after 45 quiet days",
+      'cron: "17 14 * * 1"' in _ka
+      and 'cron: "17 14 1 * *"' not in _ka
+      and "45 * 86400" in _ka
+      and ".github/keepalive" in _ka
+      and 'git commit -m "Keep scheduled workflows active"' in _ka
+      and 'git config user.name "github-actions[bot]"' in _ka
+      and "41898282+github-actions[bot]@users.noreply.github.com" in _ka
+      and "git push origin HEAD:main" in _ka)
 
 print()
 if FAILS:

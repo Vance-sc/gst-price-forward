@@ -1,22 +1,28 @@
 name: Keep scheduled workflows enabled
 
-# Public repos turn scheduled workflows off after 60 days without repository
-# activity (state disabled_inactivity). While this workflow is still
-# enabled, the monthly run calls the Actions enable API for the daily board
-# workflow and for itself. That is the preventive keepalive. It does not
-# create a commit.
+# Public repos turn scheduled workflows off after 60 days without a commit
+# (state disabled_inactivity). While this workflow can still start, the
+# weekly run re-enables update.yml and itself. If main's latest commit is
+# older than 45 days, it also writes .github/keepalive and pushes that to
+# main. Weekly, not monthly, so one missed run still lands inside 60 days.
 #
-# A workflow GitHub has already disabled will not start on its schedule, so
-# this job cannot revive one after the fact. After a disable, enable once
-# from the Actions tab (or the API). workflow_dispatch is here for a manual
-# run while the workflow is enabled; it also does not fire once disabled.
+# update.yml has no push trigger. A push made with GITHUB_TOKEN does not
+# start workflows either, so this commit cannot rebuild the board in a loop.
+#
+# A workflow already in disabled_inactivity will not start on its schedule.
+# After a disable, enable it once from the Actions tab (or the API).
 on:
   schedule:
-    - cron: "17 14 1 * *"   # 14:17 UTC on the 1st
+    - cron: "17 14 * * 1"   # 14:17 UTC Mondays
   workflow_dispatch:
 
 permissions:
   actions: write
+  contents: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
 
 jobs:
   enable:
@@ -33,3 +39,36 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/enable" \
               --silent
           done
+
+      - name: Heartbeat commit when main is older than 45 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" \
+            --jq '.commit.committer.date')
+          last_s=$(date -u -d "$last" +%s)
+          now_s=$(date -u +%s)
+          limit=$((45 * 86400))
+          age_days=$(( (now_s - last_s) / 86400 ))
+          echo "Last commit on main: ${last} (${age_days} days ago)"
+          if [ $((now_s - last_s)) -le "$limit" ]; then
+            echo "Main has a commit within 45 days; no heartbeat commit."
+            exit 0
+          fi
+          echo "Main is older than 45 days; writing .github/keepalive."
+          gh auth setup-git
+          work=$(mktemp -d)
+          git clone --depth 1 --branch main \
+            "https://github.com/${GITHUB_REPOSITORY}.git" "$work/repo"
+          cd "$work/repo"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/keepalive
+          git add .github/keepalive
+          if git diff --cached --quiet; then
+            echo "keepalive file unchanged; nothing to push."
+            exit 0
+          fi
+          git commit -m "Keep scheduled workflows active"
+          git push origin HEAD:main
