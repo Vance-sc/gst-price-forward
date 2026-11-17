@@ -1,13 +1,17 @@
 name: Update forward-buy dashboard
 
-# Runs every weekday evening (after USDA's PM boxed-beef report, published
-# ~2:45pm Central) and can be triggered by hand from the Actions tab.
-# Publishes index.html + data.json to GitHub Pages.
+# Weekday publish of the public board (GitHub Pages + SiteGround FTPS).
+# The afternoon cron runs after USDA's PM boxed-beef report (~3:00 PM Central,
+# ~2:45 PM in the report narrative). The later cron is a same-day retry when
+# that run had to keep the previous board. On schedule, if the published
+# board already shows the expected market date, the fetch and both deploys
+# are skipped. workflow_dispatch always rebuilds.
 #
-# No secrets required — the LMR DataMart is a keyless public API.
+# USDA LMR is a keyless public API. SiteGround FTPS uses repo secrets.
 on:
   schedule:
-    - cron: "0 22 * * 1-5"   # 22:00 UTC = 4-5pm Central, after the PM report
+    - cron: "0 22 * * 1-5"   # 22:00 UTC Mon-Fri, early afternoon PT, after the PM report
+    - cron: "0 2 * * 2-6"    # 02:00 UTC Tue-Sat = that same weekday evening PT
   workflow_dispatch: {}        # manual "Run workflow" button
 
 permissions:
@@ -22,7 +26,8 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Two sections can each spend ~7 minutes backing off, plus request time.
+    timeout-minutes: 45
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -35,12 +40,67 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build dashboard
+      - name: Skip if the published board is already current
+        id: freshness
+        if: github.event_name == 'schedule'
         env:
-          PUBLIC_BUILD: "1"   # strip GST's confidential $/margin figures from the public site
+          BOARD_DATA_URL: https://vance-sc.github.io/gst-price-forward/data.json
+        run: |
+          python - << 'PY'
+          import json
+          import os
+          import urllib.request
+          import generate as g
+
+          url = os.environ["BOARD_DATA_URL"]
+          out_path = os.environ["GITHUB_OUTPUT"]
+          expected = g.expected_market_date().isoformat()
+
+          def emit(current, last, note):
+              print(note)
+              with open(out_path, "a", encoding="utf-8") as fh:
+                  fh.write("current=%s\n" % ("true" if current else "false"))
+                  fh.write("last_market_date=%s\n" % (last or ""))
+                  fh.write("expected=%s\n" % expected)
+              if current:
+                  summary = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if summary:
+                      with open(summary, "a", encoding="utf-8") as fh:
+                          fh.write(note + "\n")
+
+          try:
+              with urllib.request.urlopen(url, timeout=30) as resp:
+                  meta = json.loads(resp.read().decode()).get("meta") or {}
+          except Exception as exc:
+              emit(False, "",
+                   "Could not read published board (%s); will build." % exc)
+          else:
+              last = meta.get("last_market_date") or ""
+              current = bool(last) and not g.is_board_stale(last)
+              if current:
+                  emit(True, last,
+                       "Published board already has market date %s "
+                       "(expected %s). Fetch and deploy skipped."
+                       % (last, expected))
+              else:
+                  emit(False, last,
+                       "Published board market date %s is behind expected %s; "
+                       "building." % (last or "unknown", expected))
+          PY
+
+      - name: Build dashboard
+        id: build
+        if: steps.freshness.outputs.current != 'true'
+        env:
+          PUBLIC_BUILD: "1"
         run: |
           pip install matplotlib --quiet
           python generate.py
+          if [ -f .usda_skip ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           python make_board_pdf.py
           mkdir -p public
           cp index.html public/index.html
@@ -49,12 +109,14 @@ jobs:
           cp board_data.json public/board_data.json
 
       - name: Upload Pages artifact
+        if: steps.freshness.outputs.current != 'true' && steps.build.outputs.skip != 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
       - name: Deploy to GitHub Pages
         id: deployment
+        if: steps.freshness.outputs.current != 'true' && steps.build.outputs.skip != 'true'
         uses: actions/deploy-pages@v4
 
       # Mirrors the same build to board.gstmeat.com (SiteGround hosting,
@@ -64,6 +126,7 @@ jobs:
       # lands at "/" and the credential can't touch the rest of the site.
       # Skips quietly until the secrets exist.
       - name: Deploy to board.gstmeat.com (SiteGround FTPS)
+        if: steps.freshness.outputs.current != 'true' && steps.build.outputs.skip != 'true'
         env:
           FTP_HOST: ${{ secrets.SG_FTP_HOST }}
           FTP_USER: ${{ secrets.SG_FTP_USER }}

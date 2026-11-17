@@ -17,6 +17,8 @@ import sys
 import json
 import os
 
+import generate
+
 import matplotlib
 matplotlib.use("Agg")
 # Core-14 fonts keep the PDF small (~15 KB vs ~65 KB with embedded Type3
@@ -36,6 +38,9 @@ HERE = os.path.dirname(__file__) or "."
 DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "data.json")
 D = json.load(open(DATA))
 META, PRODUCTS = D["meta"], D["products"]
+# Recomputed at render time so a later re-render of an older JSON (the
+# Friday board) still compares against the latest completed session.
+STALE_BANNER = generate.stale_banner_text(META.get("last_market_date"))
 
 PAGE_W, PAGE_H = 8.5, 11.0
 fig = plt.figure(figsize=(PAGE_W, PAGE_H))
@@ -50,15 +55,16 @@ def sma(vals, n):
     return out
 
 
-ASCII = {"—": "-", "·": "|", "†": "+", "⚠": "!",
+ASCII = {"·": "|", "†": "+", "⚠": "!",
          "→": "->", "’": "'", "‘": "'"}
 
 
-def text(x, y, s, size=8, color=INK, weight="normal", ha="left", va="top"):
+def text(x, y, s, size=8, color=INK, weight="normal", ha="left", va="top",
+         zorder=3):
     for k, v in ASCII.items():
         s = s.replace(k, v)
     fig.text(x, y, s, fontsize=size, color=color, fontweight=weight,
-             ha=ha, va=va)
+             ha=ha, va=va, zorder=zorder)
 
 
 # ---------------- header ----------------
@@ -77,8 +83,16 @@ text(0.065, 0.972, "GST's top 5 beef products · USDA boxed-beef quotes "
 demo = "  ·  SAMPLE DATA (DEMO)" if META.get("is_demo") else ""
 text(0.97, 0.992, f"Built {META.get('generated_utc','')}{demo}", size=7,
      color=MUTED, ha="right")
-text(0.97, 0.981, f"Market date: {META.get('last_market_date','—')}", size=7,
-     color=MUTED, ha="right")
+text(0.97, 0.981,
+     f"Market date: {META.get('last_market_date') or '—'}",
+     size=7, color=(RED if STALE_BANNER else MUTED), ha="right",
+     weight=("bold" if STALE_BANNER else "normal"))
+if STALE_BANNER:
+    fig.patches.append(Rectangle((0, 0.944), 1, 0.014,
+                                 transform=fig.transFigure, facecolor=RED,
+                                 edgecolor="none", zorder=4))
+    text(0.5, 0.951, STALE_BANNER, size=9, color="white", ha="center",
+         va="center", weight="bold", zorder=5)
 cut = META.get("cutout") or {}
 if cut:
     chg = cut.get("choice_chg_1d")
@@ -86,8 +100,9 @@ if cut:
          f"Choice Cutout {cut.get('choice','—')} "
          f"({'+' if (chg or 0) >= 0 else ''}{chg})  ·  Select {cut.get('select','—')}",
          size=7.5, color=INK, ha="right", weight="bold")
-for w in META.get("warnings") or []:
-    text(0.5, 0.955, "⚠ " + w, size=7.5, color=AMBER, ha="center")
+if not STALE_BANNER:
+    for w in META.get("warnings") or []:
+        text(0.5, 0.955, "⚠ " + w, size=7.5, color=AMBER, ha="center")
 
 # ---------------- cards ----------------
 ORDER = list(PRODUCTS.keys())
@@ -95,7 +110,7 @@ COLS, ROWS = 2, 3
 M, GX, GY = 0.035, 0.02, 0.012
 CW = (1 - 2 * M - GX) / 2
 CH = 0.285
-TOP = 0.945
+TOP = 0.936 if STALE_BANNER else 0.945
 
 
 def bar(x, y, w, val, color):
@@ -161,12 +176,19 @@ def card(ix, key):
                  f"'18-'26: {'+' if v['mean'] >= 0 else ''}{v['mean']}% fwd, "
                  f"hit {round(v['hit'] * 100)}% (n={v['n']})",
                  size=6, color=MUTED)
+            if v.get("n_indep"):
+                ci = v.get("ci80_indep")
+                text(bx, by - 0.051,
+                     f"indep n={v['n_indep']} avg "
+                     f"{'+' if v['mean_indep'] >= 0 else ''}{v['mean_indep']}%"
+                     + (f" (80%: {ci[0]}..{ci[1]})" if ci else ""),
+                     size=6, color=MUTED)
         comp = hz["components"]
         for ci, (lbl, ck) in enumerate([("RelVal", "rel_value"),
                                         ("Mom†", "momentum"),
                                         ("Vol", "volume"),
                                         ("C/S", "cs_spread")]):
-            cy = by - 0.055 - ci * 0.0085
+            cy = by - 0.068 - ci * 0.0085
             text(bx, cy + 0.004, lbl, size=5.5, color=MUTED)
             val = comp[ck]
             # high component value = favorable to lock = green (flipped
@@ -230,6 +252,10 @@ text(lx + 0.012, ly1 - 0.20,
      "(measured Q2-26: flap ~3d, chuck ~9d, clod ~12d).\n"
      "Live board: vance-sc.github.io/gst-price-forward",
      size=6.5, color=MUTED)
+if STALE_BANNER:
+    for i, w in enumerate(META.get("warnings") or []):
+        text(0.5, 0.022 + i * 0.012, "⚠ " + w, size=6, color=AMBER,
+             ha="center", va="bottom")
 text(0.5, 0.012, "Data: USDA AMS Market News LM_XB403 (LMR DataMart) · "
      "Built for GST Meat Co.", size=6, color=MUTED, ha="center", va="bottom")
 

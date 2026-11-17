@@ -109,9 +109,16 @@ https://mpr.datamart.ams.usda.gov/services/v1.1/reports/2453/<Section>
    averaged Choice with Select — producing garbage.
 4. Duplicate rows for one item+date are volume-weighted by `total_pounds`.
 
-**Holidays:** USDA skips reports on federal holidays (the report narrative
-announces them). The board shows the newest **market date** next to the
-build time, and displays a warning if data is more than 4 business days old.
+**Holidays and staleness:** LM_XB403 is an afternoon report (about 3:00 PM
+Central) and is not published on weekends or US federal holidays, including
+Veterans Day. `data.json` meta keeps `last_market_date` and adds
+`generated_at` (UTC), `expected_market_date` (the most recent completed
+session), and `stale` (true when the market date is older than that
+session). The page and `board.pdf` show `STALE — data as of <date>` in
+that case. A gap of more than 4 business days still adds the longer warning.
+Live fetches retry HTTP 5xx and timeouts with exponential backoff
+(`USDA_FETCH_TRIES`, `USDA_FETCH_BACKOFF`, `USDA_FETCH_BACKOFF_CAP`,
+`USDA_FETCH_TIMEOUT`) before that stale board is left in place.
 
 ---
 
@@ -124,7 +131,8 @@ build time, and displays a warning if data is more than 4 business days old.
 | `make_board_pdf.py` | Official one-page PDF (`board.pdf`) — same v2 calls as the dashboard |
 | `call_board.py` | **Experimental / local only** — momentum override PDF; not CI |
 | `backtest.py` | Walk-forward backtest of the Lock Score (run locally) |
-| `.github/workflows/update.yml` | Weekday CI → GitHub Pages (+ optional SiteGround FTPS) |
+| `.github/workflows/update.yml` | Weekday CI → GitHub Pages (+ optional SiteGround FTPS), with a same-day retry |
+| `.github/workflows/keepalive.yml` | Weekly re-enable of the scheduled workflows; commits on main only after 45 quiet days |
 | `gst_private.py` | **Local only, gitignored** — confidential sales/margin/cost overlay |
 
 `generate.py` is standard-library only. PDF scripts need `matplotlib` (CI
@@ -165,9 +173,12 @@ thresholds in `generate.py`, or treat the board as a price monitor.
 1. Push this folder to a GitHub repo (keep `.github/workflows/` intact).
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 3. Actions tab → "Update forward-buy dashboard" → **Run workflow**.
-4. Live at `https://<username>.github.io/<repo>/`. It refreshes itself each
-   weekday at 22:00 UTC (after the PM report). No secrets are required —
-   if a `USDA_API_KEY` secret exists from an earlier version, delete it.
+4. Live at `https://<username>.github.io/<repo>/`. The weekday schedule is
+   22:00 UTC (early afternoon PT, after the PM report) and 02:00 UTC Tue–Sat
+   (that same evening PT). The later run skips the fetch and both deploys
+   when the published board already has the expected market date. No USDA
+   secret is required — if a `USDA_API_KEY` secret exists from an earlier
+   version, delete it.
 
 ### Custom subdomain / `board.gstmeat.com` (SiteGround)
 
@@ -189,8 +200,15 @@ mirrored from the same CI build as GitHub Pages.
 GitHub Pages custom domain (optional alternative): **Settings → Pages →
 Custom domain**, then add the CNAME GitHub shows at your DNS registrar.
 
-`PUBLIC_BUILD=1` refuses DEMO mode so a bad USDA fetch fails the job instead
-of publishing sample LOCK/HOLD signals.
+`PUBLIC_BUILD=1` never publishes DEMO data. If USDA is still down after the
+retries, the job stays green, writes a warning, and skips Pages and
+SiteGround so the last good board stays up. `FORCE_DEMO=1` together with
+`PUBLIC_BUILD` still exits with an error. `.github/workflows/keepalive.yml` re-enables the scheduled workflows
+every week. If the latest commit on main is older than 45 days, that run
+also pushes a `.github/keepalive` timestamp so the 60-day inactivity
+disable does not recur. `update.yml` has no push trigger, so the commit
+does not rebuild the board. A workflow GitHub has already disabled will
+not start itself; after that happens, enable it once from the Actions tab.
 
 ---
 

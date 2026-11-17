@@ -43,6 +43,8 @@ No-trade rows publish weighted_average ".00" and are NOT prices: discard.
 Each product pins to ONE exact item_description + grade section.
 
 Modes: LIVE by default; FORCE_DEMO=1 or fetch failure -> flagged demo data.
+PUBLIC_BUILD never writes that demo. If the live fetch is still down after
+retries, it exits 0 without writing files so CI can keep the last board.
 
 This tool is decision support for a vendor lock conversation, not a forecast.
 """
@@ -51,8 +53,10 @@ import os
 import shutil
 import json
 import math
+import time
 import datetime as dt
 from urllib import request, parse, error
+from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
 # CONFIG — what we track
@@ -134,8 +138,23 @@ LOCK_PERCENTILE = {30: 0.88, 60: 0.82}
 HOLD_PERCENTILE = 0.30
 # Keep LOCK only when validated OOS mean/hit meet the bar; else downgrade
 # to SPLIT (float language). Applied after score labeling in analyze().
-LOCK_MIN_MEAN = {30: 3.5, 60: 4.0}   # ~4–5% bar; 30d floor = hardened pooled edge
+LOCK_MIN_MEAN = {30: 4.0, 60: 4.0}   # Vance bar: >=4% expected upside at both horizons
 LOCK_MIN_HIT = 0.65                 # High confidence (same cutoff as conf label)
+# The lock gate reads INDEPENDENT-event stats (events >= h days apart, from
+# backtest.py), not overlapping decision days. Need at least this many
+# independent LOCK events: 7 means a 65% hit bar requires >= 5 of 7 wins
+# (6 would allow 4 of 6); 8+ currently gates every product out.
+LOCK_MIN_N_INDEP = 7
+# And the low end of the bootstrap 80% interval of the independent mean
+# must be above this (percent): the edge must be positive, not just the avg.
+LOCK_MIN_CI80_LO = 0.0
+# Still-falling guard: no LOCK unless the short-term trend has stopped
+# dropping. Both the 5- and 10-trading-day price returns must be >= this
+# floor (percent). Applied live (apply_lock_bar) and in backtest.py.
+FALLING_GUARD_WINDOWS = (5, 10)
+FALLING_GUARD_MIN_PCT = -0.5
+MSG_FALLING = ("Cheap, but price is still falling — wait for the drop to "
+               "stop before locking")
 # Static fallback only if history is too thin (raised with the harder bar).
 DEFAULT_THRESHOLDS = {30: {"lock": 68.0, "hold": 40.0},
                       60: {"lock": 66.0, "hold": 39.5}}
@@ -151,36 +170,60 @@ MSG_HOLD = "Rich vs cutout / post-rally — wait"
 # a LOW hit rate is good — you were waiting). Regenerate via backtest.py
 # after any model change. Numbers below are percentile-policy OOS; live
 # LOCK is further gated by apply_lock_bar() (Vance ~4–5% / High conf bar).
+# Regenerated with the still-falling guard ON (10y history, 2026-10-23).
+# n/mean/hit = all decision days (overlapping windows); *_indep = events
+# >= h days apart per product (honest count); iqr_indep = 25th-75th pct of
+# independent returns; ci80_indep = bootstrap 80% interval of their mean.
+# The lock gate still reads mean/hit (unchanged logic).
 VALIDATION = {
  'pooled': {
-  30: {'LOCK': {'mean': 3.51, 'hit': 0.66, 'n': 200}, 'SPLIT': {'mean': 1.14, 'hit': 0.57, 'n': 1088}, 'HOLD': {'mean': -0.56, 'hit': 0.43, 'n': 564}},
-  60: {'LOCK': {'mean': 4.92, 'hit': 0.7, 'n': 298}, 'SPLIT': {'mean': 2.54, 'hit': 0.59, 'n': 976}, 'HOLD': {'mean': -1.78, 'hit': 0.4, 'n': 557}}
+  30: {'LOCK': {'mean': 4.6, 'hit': 0.78, 'n': 37, 'n_indep': 32, 'mean_indep': 4.62, 'hit_indep': 0.78, 'iqr_indep': [0.36, 8.46], 'ci80_indep': [2.94, 6.3]}, 'SPLIT': {'mean': 1.42, 'hit': 0.58, 'n': 1232, 'n_indep': 302, 'mean_indep': 0.65, 'hit_indep': 0.54, 'iqr_indep': [-3.45, 4.43], 'ci80_indep': [-0.02, 1.3]}, 'HOLD': {'mean': -0.91, 'hit': 0.43, 'n': 583, 'n_indep': 172, 'mean_indep': 0.32, 'hit_indep': 0.48, 'iqr_indep': [-3.99, 3.35], 'ci80_indep': [-0.47, 1.06]}},
+  60: {'LOCK': {'mean': 4.01, 'hit': 0.69, 'n': 83, 'n_indep': 43, 'mean_indep': 3.7, 'hit_indep': 0.67, 'iqr_indep': [-1.77, 9.85], 'ci80_indep': [2.22, 5.14]}, 'SPLIT': {'mean': 3.01, 'hit': 0.62, 'n': 1191, 'n_indep': 179, 'mean_indep': 1.7, 'hit_indep': 0.6, 'iqr_indep': [-3.41, 7.65], 'ci80_indep': [0.54, 2.76]}, 'HOLD': {'mean': -2.12, 'hit': 0.39, 'n': 557, 'n_indep': 107, 'mean_indep': 0.35, 'hit_indep': 0.46, 'iqr_indep': [-5.07, 5.24], 'ci80_indep': [-1.18, 1.71]}}
  },
  'chuck_roll': {
-  30: {'LOCK': {'mean': 1.76, 'hit': 0.64, 'n': 39}, 'SPLIT': {'mean': 1.77, 'hit': 0.57, 'n': 221}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 111}},
-  60: {'LOCK': {'mean': 3.54, 'hit': 0.6, 'n': 67}, 'SPLIT': {'mean': 4.38, 'hit': 0.63, 'n': 187}, 'HOLD': {'mean': -3.02, 'hit': 0.35, 'n': 113}}
+  30: {'LOCK': {'mean': 3.65, 'hit': 0.71, 'n': 7, 'n_indep': 7, 'mean_indep': 3.65, 'hit_indep': 0.71, 'iqr_indep': [-0.16, 7.03], 'ci80_indep': [1.17, 6.35]}, 'SPLIT': {'mean': 1.89, 'hit': 0.57, 'n': 250, 'n_indep': 58, 'mean_indep': 0.69, 'hit_indep': 0.47, 'iqr_indep': [-3.89, 5.13], 'ci80_indep': [-0.81, 2.16]}, 'HOLD': {'mean': -0.65, 'hit': 0.47, 'n': 113, 'n_indep': 33, 'mean_indep': 1.18, 'hit_indep': 0.55, 'iqr_indep': [-6.8, 7.61], 'ci80_indep': [-1.31, 3.64]}},
+  60: {'LOCK': {'mean': 2.96, 'hit': 0.58, 'n': 19, 'n_indep': 9, 'mean_indep': 4.99, 'hit_indep': 0.67, 'iqr_indep': [-1.02, 10.49], 'ci80_indep': [1.68, 8.31]}, 'SPLIT': {'mean': 4.58, 'hit': 0.66, 'n': 237, 'n_indep': 35, 'mean_indep': 3.26, 'hit_indep': 0.63, 'iqr_indep': [-3.33, 9.8], 'ci80_indep': [0.36, 6.06]}, 'HOLD': {'mean': -3.25, 'hit': 0.35, 'n': 110, 'n_indep': 19, 'mean_indep': 2.19, 'hit_indep': 0.47, 'iqr_indep': [-6.38, 7.14], 'ci80_indep': [-1.31, 5.7]}}
  },
  'flap': {
-  30: {'LOCK': {'mean': 6.57, 'hit': 0.7, 'n': 47}, 'SPLIT': {'mean': 0.38, 'hit': 0.53, 'n': 204}, 'HOLD': {'mean': -0.45, 'hit': 0.49, 'n': 118}},
-  60: {'LOCK': {'mean': 6.66, 'hit': 0.75, 'n': 65}, 'SPLIT': {'mean': 2.16, 'hit': 0.6, 'n': 182}, 'HOLD': {'mean': -2.06, 'hit': 0.42, 'n': 118}}
+  30: {'LOCK': {'mean': 7.05, 'hit': 0.86, 'n': 7, 'n_indep': 6, 'mean_indep': 8.1, 'hit_indep': 0.83, 'iqr_indep': [0.75, 8.3], 'ci80_indep': [2.42, 14.23]}, 'SPLIT': {'mean': 1.32, 'hit': 0.56, 'n': 249, 'n_indep': 61, 'mean_indep': -0.09, 'hit_indep': 0.51, 'iqr_indep': [-5.07, 5.07], 'ci80_indep': [-1.29, 1.07]}, 'HOLD': {'mean': -1.02, 'hit': 0.47, 'n': 114, 'n_indep': 34, 'mean_indep': 0.18, 'hit_indep': 0.47, 'iqr_indep': [-4.66, 4.53], 'ci80_indep': [-1.38, 1.66]}},
+  60: {'LOCK': {'mean': 2.7, 'hit': 0.56, 'n': 18, 'n_indep': 9, 'mean_indep': 3.5, 'hit_indep': 0.56, 'iqr_indep': [-2.79, 8.18], 'ci80_indep': [-0.32, 7.23]}, 'SPLIT': {'mean': 3.23, 'hit': 0.64, 'n': 233, 'n_indep': 36, 'mean_indep': 0.97, 'hit_indep': 0.58, 'iqr_indep': [-5.25, 9.13], 'ci80_indep': [-1.47, 3.22]}, 'HOLD': {'mean': -2.66, 'hit': 0.38, 'n': 115, 'n_indep': 21, 'mean_indep': -0.73, 'hit_indep': 0.38, 'iqr_indep': [-5.86, 6.29], 'ci80_indep': [-3.53, 2.14]}}
  },
  'shoulder_clod': {
-  30: {'LOCK': {'mean': 1.95, 'hit': 0.61, 'n': 38}, 'SPLIT': {'mean': 1.64, 'hit': 0.59, 'n': 209}, 'HOLD': {'mean': -0.4, 'hit': 0.38, 'n': 124}},
-  60: {'LOCK': {'mean': 3.12, 'hit': 0.63, 'n': 62}, 'SPLIT': {'mean': 3.06, 'hit': 0.62, 'n': 181}, 'HOLD': {'mean': -0.67, 'hit': 0.41, 'n': 123}}
+  30: {'LOCK': {'mean': 4.95, 'hit': 0.67, 'n': 6, 'n_indep': 5, 'mean_indep': 4.44, 'hit_indep': 0.6, 'iqr_indep': [-1.3, 9.37], 'ci80_indep': [1.28, 7.42]}, 'SPLIT': {'mean': 1.9, 'hit': 0.6, 'n': 241, 'n_indep': 64, 'mean_indep': 1.61, 'hit_indep': 0.55, 'iqr_indep': [-2.37, 2.92], 'ci80_indep': [-0.21, 3.56]}, 'HOLD': {'mean': -1.14, 'hit': 0.38, 'n': 124, 'n_indep': 38, 'mean_indep': 0.34, 'hit_indep': 0.5, 'iqr_indep': [-2.05, 2.66], 'ci80_indep': [-1.3, 2.02]}},
+  60: {'LOCK': {'mean': 2.72, 'hit': 0.57, 'n': 14, 'n_indep': 7, 'mean_indep': -0.75, 'hit_indep': 0.43, 'iqr_indep': [-4.39, 2.99], 'ci80_indep': [-3.03, 1.66]}, 'SPLIT': {'mean': 2.93, 'hit': 0.64, 'n': 236, 'n_indep': 36, 'mean_indep': 1.71, 'hit_indep': 0.67, 'iqr_indep': [-0.62, 5.01], 'ci80_indep': [-0.58, 3.95]}, 'HOLD': {'mean': -1.04, 'hit': 0.46, 'n': 116, 'n_indep': 24, 'mean_indep': -0.05, 'hit_indep': 0.46, 'iqr_indep': [-4.39, 4.04], 'ci80_indep': [-4.82, 4.63]}}
  },
  'short_rib': {
-  30: {'LOCK': {'mean': 2.21, 'hit': 0.53, 'n': 38}, 'SPLIT': {'mean': 0.69, 'hit': 0.53, 'n': 228}, 'HOLD': {'mean': -0.51, 'hit': 0.42, 'n': 104}},
-  60: {'LOCK': {'mean': 3.43, 'hit': 0.62, 'n': 53}, 'SPLIT': {'mean': 1.09, 'hit': 0.54, 'n': 212}, 'HOLD': {'mean': -0.76, 'hit': 0.43, 'n': 101}}
+  30: {'LOCK': {'mean': 4.27, 'hit': 0.78, 'n': 9, 'n_indep': 7, 'mean_indep': 3.26, 'hit_indep': 0.71, 'iqr_indep': [-2.13, 7.3], 'ci80_indep': [-0.53, 7.04]}, 'SPLIT': {'mean': 0.64, 'hit': 0.54, 'n': 247, 'n_indep': 61, 'mean_indep': 0.96, 'hit_indep': 0.61, 'iqr_indep': [-3.35, 3.82], 'ci80_indep': [-0.17, 2.07]}, 'HOLD': {'mean': -0.89, 'hit': 0.41, 'n': 114, 'n_indep': 34, 'mean_indep': -0.85, 'hit_indep': 0.41, 'iqr_indep': [-3.96, 2.0], 'ci80_indep': [-1.97, 0.18]}},
+  60: {'LOCK': {'mean': 4.03, 'hit': 0.73, 'n': 15, 'n_indep': 8, 'mean_indep': 1.23, 'hit_indep': 0.62, 'iqr_indep': [-5.11, 6.68], 'ci80_indep': [-2.19, 4.52]}, 'SPLIT': {'mean': 1.23, 'hit': 0.52, 'n': 250, 'n_indep': 36, 'mean_indep': 1.91, 'hit_indep': 0.53, 'iqr_indep': [-3.32, 7.15], 'ci80_indep': [0.09, 3.87]}, 'HOLD': {'mean': -0.99, 'hit': 0.45, 'n': 101, 'n_indep': 23, 'mean_indep': -0.2, 'hit_indep': 0.43, 'iqr_indep': [-4.85, 5.14], 'ci80_indep': [-2.4, 2.05]}}
  },
  'round': {
-  30: {'LOCK': {'mean': 4.38, 'hit': 0.79, 'n': 38}, 'SPLIT': {'mean': 1.22, 'hit': 0.61, 'n': 226}, 'HOLD': {'mean': -0.68, 'hit': 0.41, 'n': 107}},
-  60: {'LOCK': {'mean': 8.25, 'hit': 0.96, 'n': 51}, 'SPLIT': {'mean': 2.26, 'hit': 0.57, 'n': 214}, 'HOLD': {'mean': -2.41, 'hit': 0.38, 'n': 102}}
+  30: {'LOCK': {'mean': 3.42, 'hit': 0.88, 'n': 8, 'n_indep': 7, 'mean_indep': 4.12, 'hit_indep': 1.0, 'iqr_indep': [1.03, 6.62], 'ci80_indep': [2.5, 5.76]}, 'SPLIT': {'mean': 1.38, 'hit': 0.62, 'n': 245, 'n_indep': 58, 'mean_indep': 0.01, 'hit_indep': 0.55, 'iqr_indep': [-2.05, 4.14], 'ci80_indep': [-1.43, 1.33]}, 'HOLD': {'mean': -0.82, 'hit': 0.4, 'n': 118, 'n_indep': 33, 'mean_indep': 0.78, 'hit_indep': 0.48, 'iqr_indep': [-2.56, 3.34], 'ci80_indep': [-0.94, 2.7]}},
+  60: {'LOCK': {'mean': 7.61, 'hit': 1.0, 'n': 17, 'n_indep': 10, 'mean_indep': 7.81, 'hit_indep': 1.0, 'iqr_indep': [3.11, 11.85], 'ci80_indep': [5.62, 10.17]}, 'SPLIT': {'mean': 3.16, 'hit': 0.66, 'n': 235, 'n_indep': 36, 'mean_indep': 0.69, 'hit_indep': 0.58, 'iqr_indep': [-3.47, 8.04], 'ci80_indep': [-1.74, 2.97]}, 'HOLD': {'mean': -2.56, 'hit': 0.31, 'n': 115, 'n_indep': 20, 'mean_indep': 0.83, 'hit_indep': 0.55, 'iqr_indep': [-4.44, 5.24], 'ci80_indep': [-1.76, 3.51]}}
  }
 }
 PUBLISH_POINTS = 270
 STALE_BUSINESS_DAYS = 4
 PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
 FORCE_DEMO = bool(os.environ.get("FORCE_DEMO"))
+
+# 5xx / timeouts: 6 tries, exponential waits 15+30+60+120+180s (~7 min)
+# per section before giving up. Override in the environment (seconds).
+USDA_FETCH_TRIES_DEFAULT = 6
+USDA_FETCH_TIMEOUT_DEFAULT = 90
+USDA_FETCH_BACKOFF_DEFAULT = 15
+USDA_FETCH_BACKOFF_CAP_DEFAULT = 180
+USDA_EMPTY_RETRY_SECONDS = 5   # empty 200s are not a multi-minute outage
+USDA_SKIP_MARK = ".usda_skip"  # CI: live data missing, do not deploy
+
+# LM_XB403 afternoon report is released at 3:00 PM Central. That session
+# counts once the clock passes that time. Weekends and US federal holidays
+# (OPM list, Saturday observed Friday, Sunday observed Monday) are not
+# market days. The 2020 LMPRS guide names six (New Year's, Memorial Day,
+# Independence Day, Labor Day, Thanksgiving, Christmas). The board also
+# treats the rest of the federal list as closed — including Veterans Day —
+# so a report-less holiday is not flagged stale.
+REPORT_READY = (15, 0)
+CT = ZoneInfo("America/Chicago")
 
 
 # ---------------------------------------------------------------------------
@@ -201,30 +244,106 @@ def _extract_rows(payload):
     return []
 
 
-def _fetch_section(section, begin, end, tries=3, timeout=90):
+def _pos_number(name, default, kind):
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return kind(default)
+    try:
+        value = kind(raw)
+    except (TypeError, ValueError):
+        return kind(default)
+    if value <= 0:
+        return kind(default)
+    return value
+
+
+def _usda_fetch_settings():
+    """Live env so a workflow can lengthen the retry without a code change."""
+    tries = int(_pos_number("USDA_FETCH_TRIES", USDA_FETCH_TRIES_DEFAULT, float))
+    return {
+        "tries": max(1, tries),
+        "timeout": _pos_number("USDA_FETCH_TIMEOUT",
+                               USDA_FETCH_TIMEOUT_DEFAULT, float),
+        "backoff": _pos_number("USDA_FETCH_BACKOFF",
+                               USDA_FETCH_BACKOFF_DEFAULT, float),
+        "backoff_cap": _pos_number("USDA_FETCH_BACKOFF_CAP",
+                                   USDA_FETCH_BACKOFF_CAP_DEFAULT, float),
+    }
+
+
+def _backoff_seconds(attempt, base, cap):
+    """attempt is 1-based: 15, 30, 60, ... capped."""
+    return min(float(cap), float(base) * (2 ** (attempt - 1)))
+
+
+def _retryable_fetch_error(exc):
+    """5xx, timeouts, connection failures, and a truncated JSON body.
+    4xx is a request bug and is not retried. HTTPError is a URLError,
+    so it has to be classified first."""
+    if isinstance(exc, error.HTTPError):
+        return 500 <= int(exc.code) <= 599
+    if isinstance(exc, (TimeoutError, ConnectionError, json.JSONDecodeError)):
+        return True
+    if isinstance(exc, error.URLError):
+        return True
+    return False
+
+
+def _default_opener(url, timeout):
+    return request.urlopen(request.Request(url), timeout=timeout)
+
+
+def _fetch_section(section, begin, end, tries=None, timeout=None,
+                   backoff=None, backoff_cap=None, opener=None, sleeper=None):
+    cfg = _usda_fetch_settings()
+    tries = cfg["tries"] if tries is None else max(1, int(tries))
+    timeout = cfg["timeout"] if timeout is None else timeout
+    backoff = cfg["backoff"] if backoff is None else backoff
+    backoff_cap = cfg["backoff_cap"] if backoff_cap is None else backoff_cap
+    opener = opener or _default_opener
+    sleeper = sleeper or time.sleep
     dr = f"{begin:%m/%d/%Y}:{end:%m/%d/%Y}"
     url = (API_BASE + REPORT_ID + "/" + parse.quote(section)
            + "?q=report_date=" + parse.quote(dr, safe="/:"))
     last_err = None
+    attempt = 0
     for attempt in range(1, tries + 1):
+        retry = False
+        delay = 0.0
         try:
-            with request.urlopen(request.Request(url), timeout=timeout) as r:
-                payload = json.loads(r.read().decode())
+            with opener(url, timeout) as resp:
+                payload = json.loads(resp.read().decode())
             rows = _extract_rows(payload)
             if rows:
                 print(f"SECTION '{section}': {len(rows)} rows "
                       f"(attempt {attempt})")
                 return rows, None
             last_err = "0 rows returned"
-        except error.HTTPError as e:
-            last_err = f"HTTP {e.code}"
-        except Exception as ex:                     # noqa: BLE001
-            last_err = str(ex)
-        print(f"SECTION '{section}' attempt {attempt}: {last_err}")
-        if attempt < tries:
-            import time
-            time.sleep(5 * attempt)
-    return [], f"section '{section}' failed after {tries} tries: {last_err}"
+            retry = attempt < tries
+            delay = float(USDA_EMPTY_RETRY_SECONDS) if retry else 0.0
+        except error.HTTPError as exc:
+            last_err = f"HTTP {exc.code}"
+            try:
+                exc.close()
+            except Exception:                          # noqa: BLE001
+                pass
+            retry = _retryable_fetch_error(exc) and attempt < tries
+            delay = (_backoff_seconds(attempt, backoff, backoff_cap)
+                     if retry else 0.0)
+        except Exception as exc:                       # noqa: BLE001
+            last_err = str(exc) or exc.__class__.__name__
+            retry = _retryable_fetch_error(exc) and attempt < tries
+            delay = (_backoff_seconds(attempt, backoff, backoff_cap)
+                     if retry else 0.0)
+        extra = f"; retrying in {delay:.0f}s" if retry else ""
+        print(f"SECTION '{section}' attempt {attempt}/{tries}: "
+              f"{last_err}{extra}")
+        if not retry:
+            break
+        if delay > 0:
+            sleeper(delay)
+    return [], (f"section '{section}' failed after {attempt} tries: "
+                f"{last_err}")
 
 
 def fetch_live():
@@ -491,41 +610,78 @@ def label_for(score, horizon_days, thresholds=None):
 
 
 def validation_for(key, horizon_days, signal):
-    """Out-of-sample stats for this product+horizon+bucket (pooled fallback)."""
+    """Out-of-sample stats for this product+horizon+bucket (pooled fallback).
+    LOCK confidence uses independent-event stats (hit_indep / n_indep)."""
     h = 30 if horizon_days <= 30 else 60
     v = VALIDATION.get(key, {}).get(h, {}).get(signal) \
         or VALIDATION["pooled"][h].get(signal)
     if not v:
         return None, "Low"
-    # Confidence from validated hit rate. For HOLD, a LOW hit rate is good
-    # (you wanted the price to fall while you waited).
-    eff = (1 - v["hit"]) if signal == "HOLD" else \
-        (v["hit"] if signal == "LOCK" else 0.5)
+    if signal == "LOCK":
+        if "hit_indep" not in v:
+            return v, "Low"          # fail closed: no honest counts
+        eff, n = v["hit_indep"], v["n_indep"]
+        min_n = LOCK_MIN_N_INDEP
+    else:
+        # Confidence from validated hit rate. For HOLD, a LOW hit rate is
+        # good (you wanted the price to fall while you waited).
+        eff = (1 - v["hit"]) if signal == "HOLD" else 0.5
+        n, min_n = v["n"], 25
     conf = "High" if eff >= 0.65 else "Medium" if eff >= 0.55 else "Low"
-    if v["n"] < 25 and conf == "High":
+    if n < min_n and conf == "High":
         conf = "Medium"
     return v, conf
 
 
 def meets_lock_bar(vstats, conf, horizon_days):
-    """Vance bar: ~4–5% expected upside with High confidence."""
+    """Vance bar: ~4-5% expected upside with High confidence, judged on
+    INDEPENDENT events: n_indep >= LOCK_MIN_N_INDEP, mean_indep >=
+    LOCK_MIN_MEAN, hit_indep >= LOCK_MIN_HIT, ci80 low > LOCK_MIN_CI80_LO."""
     h = 30 if horizon_days <= 30 else 60
-    if not vstats:
+    if not vstats or conf != "High" or "n_indep" not in vstats:
         return False
-    if conf != "High":
+    if vstats["n_indep"] < LOCK_MIN_N_INDEP:
         return False
-    if vstats.get("hit", 0) < LOCK_MIN_HIT:
+    if vstats.get("hit_indep", 0) < LOCK_MIN_HIT:
         return False
-    if vstats.get("mean", 0) < LOCK_MIN_MEAN[h]:
+    if vstats.get("mean_indep", 0) < LOCK_MIN_MEAN[h]:
+        return False
+    ci = vstats.get("ci80_indep")
+    if not ci or ci[0] <= LOCK_MIN_CI80_LO:
         return False
     return True
 
 
-def apply_lock_bar(tag, msg, key, horizon_days):
-    """Downgrade score-based LOCK to SPLIT unless validated bar is met.
-    Soft SPLIT must not nudge locking — float/wait language only."""
+def short_term_returns(prices, i):
+    """{window: % return from i-window to i} for FALLING_GUARD_WINDOWS
+    (None where history is too short). Trailing data only."""
+    out = {}
+    for w in FALLING_GUARD_WINDOWS:
+        if i - w >= 0 and prices[i - w]:
+            out[w] = (prices[i] - prices[i - w]) / prices[i - w] * 100
+        else:
+            out[w] = None
+    return out
+
+
+def trend_ok(prices, i):
+    """True when the price is flat or up over every guard window
+    (each return >= FALLING_GUARD_MIN_PCT). Missing history -> False
+    (fail closed: no LOCK without evidence the drop has stopped)."""
+    rets = short_term_returns(prices, i)
+    return all(r is not None and r >= FALLING_GUARD_MIN_PCT
+               for r in rets.values())
+
+
+def apply_lock_bar(tag, msg, key, horizon_days, trend_is_ok=True):
+    """Downgrade score-based LOCK to SPLIT unless validated bar is met
+    and the still-falling guard passes. Soft SPLIT must not nudge
+    locking — float/wait language only."""
     if tag != "LOCK":
         return tag, msg, *validation_for(key, horizon_days, tag)
+    if not trend_is_ok:
+        v2, conf2 = validation_for(key, horizon_days, "SPLIT")
+        return "SPLIT", MSG_FALLING, v2, conf2
     vstats, conf = validation_for(key, horizon_days, "LOCK")
     if meets_lock_bar(vstats, conf, horizon_days):
         return "LOCK", MSG_LOCK, vstats, conf
@@ -581,13 +737,17 @@ def analyze(series, cutout):
         vol = volatility(prices)
         horizons = {}
         usable = True
+        st_rets = short_term_returns(prices, len(prices) - 1)
+        guard_ok = trend_ok(prices, len(prices) - 1)
         for h in (30, 60):
             score, detail = score_at(F, len(pts) - 1, h)
             if score is None:
                 usable = False
                 break
             tag, msg = label_for(score, h, thresholds)
-            tag, msg, vstats, conf = apply_lock_bar(tag, msg, key, h)
+            score_tag = tag
+            tag, msg, vstats, conf = apply_lock_bar(tag, msg, key, h,
+                                                    guard_ok)
             horizons[h] = {
                 "score": round(score, 1),
                 "signal": tag, "message": msg,
@@ -597,6 +757,14 @@ def analyze(series, cutout):
                 "detail": detail,
                 "confidence": conf,
                 "validation": vstats,
+                "score_signal": score_tag,
+                "falling_guard": {
+                    "ok": guard_ok,
+                    "min_pct": FALLING_GUARD_MIN_PCT,
+                    "returns_pct": {str(w): (round(r, 2) if r is not None
+                                             else None)
+                                    for w, r in st_rets.items()},
+                },
             }
         if not usable:
             continue
@@ -636,14 +804,137 @@ def _business_days_between(a, b):
     return days
 
 
+def _nth_weekday(year, month, weekday, n):
+    """weekday: Monday=0. n=1 is the first; n=-1 is the last."""
+    if n > 0:
+        d = dt.date(year, month, 1)
+        shift = (weekday - d.weekday()) % 7
+        return d + dt.timedelta(days=shift + 7 * (n - 1))
+    if month == 12:
+        d = dt.date(year + 1, 1, 1) - dt.timedelta(days=1)
+    else:
+        d = dt.date(year, month + 1, 1) - dt.timedelta(days=1)
+    return d - dt.timedelta(days=(d.weekday() - weekday) % 7)
+
+
+def _observed(d):
+    """OPM: Saturday holidays are observed Friday, Sunday holidays Monday."""
+    if d.weekday() == 5:
+        return d - dt.timedelta(days=1)
+    if d.weekday() == 6:
+        return d + dt.timedelta(days=1)
+    return d
+
+
+_HOLIDAYS = {}
+
+
+def federal_holidays(year):
+    """OPM federal holidays for `year`, including observed dates that
+    fall in an adjacent year (New Year's observed on Dec 31)."""
+    hit = _HOLIDAYS.get(year)
+    if hit is not None:
+        return hit
+    fixed = [_observed(dt.date(year, m, day)) for m, day in
+             ((1, 1), (6, 19), (7, 4), (11, 11), (12, 25))]
+    floating = [
+        _nth_weekday(year, 1, 0, 3),    # MLK
+        _nth_weekday(year, 2, 0, 3),    # Washington's Birthday
+        _nth_weekday(year, 5, 0, -1),   # Memorial Day
+        _nth_weekday(year, 9, 0, 1),    # Labor Day
+        _nth_weekday(year, 10, 0, 2),   # Columbus Day
+        _nth_weekday(year, 11, 3, 4),   # Thanksgiving
+    ]
+    hit = set(fixed + floating)
+    _HOLIDAYS[year] = hit
+    return hit
+
+
+def is_federal_holiday(d):
+    years = (d.year - 1, d.year, d.year + 1)
+    return any(d in federal_holidays(y) for y in years)
+
+
+def is_market_day(d):
+    return d.weekday() < 5 and not is_federal_holiday(d)
+
+
+def _as_utc(now):
+    if now is None:
+        return dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=dt.timezone.utc)
+    return now
+
+
+def expected_market_date(now=None):
+    """Most recent completed LM_XB403 session.
+
+    Today counts only when it is a market day and the afternoon report
+    (3:00 PM America/Chicago) is already out. Otherwise walk back over
+    weekends and federal holidays."""
+    ct = _as_utc(now).astimezone(CT)
+    d = ct.date()
+    ready = (ct.hour, ct.minute) >= REPORT_READY
+    if not (is_market_day(d) and ready):
+        d -= dt.timedelta(days=1)
+        for _ in range(21):
+            if is_market_day(d):
+                break
+            d -= dt.timedelta(days=1)
+    return d
+
+
+def _as_date(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    return dt.date.fromisoformat(str(value)[:10])
+
+
+def is_board_stale(last_market_date, now=None):
+    last = _as_date(last_market_date)
+    if last is None:
+        return True
+    return last < expected_market_date(now)
+
+
+def stale_banner_text(last_market_date, now=None):
+    """Visible banner, or None when the board is on the latest session."""
+    if not is_board_stale(last_market_date, now):
+        return None
+    last = _as_date(last_market_date)
+    shown = last.isoformat() if last else "unknown"
+    return f"STALE — data as of {shown}"
+
+
+def market_freshness(last_market, now=None):
+    """Build-time fields a downstream digest can compare without refetching."""
+    clock = _as_utc(now)
+    last = _as_date(last_market)
+    gen = clock.astimezone(dt.timezone.utc).replace(microsecond=0)
+    last_s = last.isoformat() if last else None
+    return {
+        "generated_at": gen.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_utc": gen.strftime("%Y-%m-%d %H:%M UTC"),
+        "last_market_date": last_s,
+        "expected_market_date": expected_market_date(clock).isoformat(),
+        "stale": is_board_stale(last_s, clock),
+    }
+
+
 # ---------------------------------------------------------------------------
 # RENDER
 # ---------------------------------------------------------------------------
-def build(series, cutout, is_demo, warnings):
+def build(series, cutout, is_demo, warnings, now=None):
     analysis, thresholds = analyze(series, cutout)
     last_dates = [pts[-1][0] for pts in series.values() if pts]
     last_market = max(last_dates) if last_dates else None
-    today = dt.date.today()
+    clock = _as_utc(now)
+    today = clock.astimezone(CT).date()
     if last_market and _business_days_between(last_market, today) \
             > STALE_BUSINESS_DAYS:
         warnings.append(f"Newest USDA market date is {last_market.isoformat()}"
@@ -657,9 +948,13 @@ def build(series, cutout, is_demo, warnings):
         prev = cutout[-2] if len(cutout) > 1 else None
         cut_meta = {"date": d.isoformat(), "choice": ch, "select": se,
                     "choice_chg_1d": round(ch - prev[1], 2) if prev else None}
+    fresh = market_freshness(last_market, clock)
     meta = {
-        "generated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "last_market_date": last_market.isoformat() if last_market else None,
+        "generated_utc": fresh["generated_utc"],
+        "generated_at": fresh["generated_at"],
+        "last_market_date": fresh["last_market_date"],
+        "expected_market_date": fresh["expected_market_date"],
+        "stale": fresh["stale"],
         "is_demo": is_demo, "public": PUBLIC_BUILD,
         "warnings": warnings,
         "cutout": cut_meta,
@@ -695,38 +990,93 @@ def render_html(out):
     return HTML.replace("/*__DATA__*/", "window.APP_DATA = " + payload + ";")
 
 
+def _usda_skip_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        USDA_SKIP_MARK)
+
+
+def _clear_usda_skip_mark():
+    path = _usda_skip_path()
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def _series_unusable(series, cutout):
+    good = sum(1 for v in series.values() if len(v) >= 400)
+    return (good == 0 or not cutout), good
+
+
+def _refuse_public_demo(warnings):
+    """FORCE_DEMO (or any other path that would publish sample data)
+    stays fail-closed. Live outages do not come through here."""
+    msg = ("PUBLIC_BUILD=1 refuses DEMO mode — live USDA data required. "
+           "Fix the fetch or unset PUBLIC_BUILD for local demos.")
+    print("ERROR:", msg)
+    if warnings:
+        print("Warnings:", *warnings, sep="\n  - ")
+    raise SystemExit(2)
+
+
+def _keep_last_board(warnings):
+    """Live USDA data never arrived. Do not write DEMO files and do not
+    fail the job: the workflow skips Pages and SiteGround so the last
+    good board stays up."""
+    msg = ("USDA live data unavailable after retries; "
+           "the board was kept at its last market date. "
+           "Pages and SiteGround deploy skipped. "
+           "DEMO data was not published.")
+    print("::warning::" + msg)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(msg + "\n")
+    with open(_usda_skip_path(), "w", encoding="utf-8") as fh:
+        fh.write(msg + "\n")
+    if warnings:
+        print("Warnings:", *warnings, sep="\n  - ")
+    raise SystemExit(0)
+
+
 # ---------------------------------------------------------------------------
 def main():
+    global PUBLIC_BUILD, FORCE_DEMO
+    PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
+    FORCE_DEMO = bool(os.environ.get("FORCE_DEMO"))
+    _clear_usda_skip_mark()
     warnings = []
     if FORCE_DEMO:
         print("FORCE_DEMO set — DEMO mode (sample data).")
+        if PUBLIC_BUILD:
+            _refuse_public_demo(warnings)
         (series, cutout), is_demo = generate_demo(), True
     else:
         try:
             rows, warnings = fetch_live()
             series, cutout = parse_rows(rows)
-            good = sum(1 for v in series.values() if len(v) >= 400)
-            if good == 0 or not cutout:
+            unusable, good = _series_unusable(series, cutout)
+            if unusable:
                 warnings.append("Live pull returned no usable series — "
-                                "check PRODUCTS mapping. Showing DEMO data.")
+                                "check PRODUCTS mapping.")
+                print("WARNING:", warnings[-1])
+                if PUBLIC_BUILD:
+                    _keep_last_board(warnings)
+                warnings[-1] += " Showing DEMO data."
                 print("WARNING:", warnings[-1])
                 (series, cutout), is_demo = generate_demo(), True
             else:
                 is_demo = False
                 print(f"LIVE mode: {good}/{len(PRODUCTS)} product series.")
         except Exception as e:                        # noqa: BLE001
-            warnings.append(f"Live fetch failed ({e}). Showing DEMO data.")
+            warnings.append(f"Live fetch failed ({e}).")
+            print("WARNING:", warnings[-1])
+            if PUBLIC_BUILD:
+                _keep_last_board(warnings)
+            warnings[-1] += " Showing DEMO data."
             print("WARNING:", warnings[-1])
             (series, cutout), is_demo = generate_demo(), True
 
     if is_demo and PUBLIC_BUILD:
-        # Never publish sample LOCK/HOLD signals to Pages / board.gstmeat.com.
-        msg = ("PUBLIC_BUILD=1 refuses DEMO mode — live USDA data required. "
-               "Fix the fetch or unset PUBLIC_BUILD for local demos.")
-        print("ERROR:", msg)
-        if warnings:
-            print("Warnings:", *warnings, sep="\n  - ")
-        raise SystemExit(2)
+        _refuse_public_demo(warnings)
 
     out = build(series, cutout, is_demo, warnings)
     print(f"Built dashboard for {len(out['products'])} products. "
