@@ -43,6 +43,8 @@ No-trade rows publish weighted_average ".00" and are NOT prices: discard.
 Each product pins to ONE exact item_description + grade section.
 
 Modes: LIVE by default; FORCE_DEMO=1 or fetch failure -> flagged demo data.
+PUBLIC_BUILD never writes that demo. If the live fetch is still down after
+retries, it exits 0 without writing files so CI can keep the last board.
 
 This tool is decision support for a vendor lock conversation, not a forecast.
 """
@@ -51,8 +53,10 @@ import os
 import shutil
 import json
 import math
+import time
 import datetime as dt
 from urllib import request, parse, error
+from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
 # CONFIG — what we track
@@ -202,6 +206,25 @@ STALE_BUSINESS_DAYS = 4
 PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
 FORCE_DEMO = bool(os.environ.get("FORCE_DEMO"))
 
+# 5xx / timeouts: 6 tries, exponential waits 15+30+60+120+180s (~7 min)
+# per section before giving up. Override in the environment (seconds).
+USDA_FETCH_TRIES_DEFAULT = 6
+USDA_FETCH_TIMEOUT_DEFAULT = 90
+USDA_FETCH_BACKOFF_DEFAULT = 15
+USDA_FETCH_BACKOFF_CAP_DEFAULT = 180
+USDA_EMPTY_RETRY_SECONDS = 5   # empty 200s are not a multi-minute outage
+USDA_SKIP_MARK = ".usda_skip"  # CI: live data missing, do not deploy
+
+# LM_XB403 afternoon report is released at 3:00 PM Central. That session
+# counts once the clock passes that time. Weekends and US federal holidays
+# (OPM list, Saturday observed Friday, Sunday observed Monday) are not
+# market days. The 2020 LMPRS guide names six (New Year's, Memorial Day,
+# Independence Day, Labor Day, Thanksgiving, Christmas). The board also
+# treats the rest of the federal list as closed — including Veterans Day —
+# so a report-less holiday is not flagged stale.
+REPORT_READY = (15, 0)
+CT = ZoneInfo("America/Chicago")
+
 
 # ---------------------------------------------------------------------------
 # DATA FETCH
@@ -221,30 +244,106 @@ def _extract_rows(payload):
     return []
 
 
-def _fetch_section(section, begin, end, tries=3, timeout=90):
+def _pos_number(name, default, kind):
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return kind(default)
+    try:
+        value = kind(raw)
+    except (TypeError, ValueError):
+        return kind(default)
+    if value <= 0:
+        return kind(default)
+    return value
+
+
+def _usda_fetch_settings():
+    """Live env so a workflow can lengthen the retry without a code change."""
+    tries = int(_pos_number("USDA_FETCH_TRIES", USDA_FETCH_TRIES_DEFAULT, float))
+    return {
+        "tries": max(1, tries),
+        "timeout": _pos_number("USDA_FETCH_TIMEOUT",
+                               USDA_FETCH_TIMEOUT_DEFAULT, float),
+        "backoff": _pos_number("USDA_FETCH_BACKOFF",
+                               USDA_FETCH_BACKOFF_DEFAULT, float),
+        "backoff_cap": _pos_number("USDA_FETCH_BACKOFF_CAP",
+                                   USDA_FETCH_BACKOFF_CAP_DEFAULT, float),
+    }
+
+
+def _backoff_seconds(attempt, base, cap):
+    """attempt is 1-based: 15, 30, 60, ... capped."""
+    return min(float(cap), float(base) * (2 ** (attempt - 1)))
+
+
+def _retryable_fetch_error(exc):
+    """5xx, timeouts, connection failures, and a truncated JSON body.
+    4xx is a request bug and is not retried. HTTPError is a URLError,
+    so it has to be classified first."""
+    if isinstance(exc, error.HTTPError):
+        return 500 <= int(exc.code) <= 599
+    if isinstance(exc, (TimeoutError, ConnectionError, json.JSONDecodeError)):
+        return True
+    if isinstance(exc, error.URLError):
+        return True
+    return False
+
+
+def _default_opener(url, timeout):
+    return request.urlopen(request.Request(url), timeout=timeout)
+
+
+def _fetch_section(section, begin, end, tries=None, timeout=None,
+                   backoff=None, backoff_cap=None, opener=None, sleeper=None):
+    cfg = _usda_fetch_settings()
+    tries = cfg["tries"] if tries is None else max(1, int(tries))
+    timeout = cfg["timeout"] if timeout is None else timeout
+    backoff = cfg["backoff"] if backoff is None else backoff
+    backoff_cap = cfg["backoff_cap"] if backoff_cap is None else backoff_cap
+    opener = opener or _default_opener
+    sleeper = sleeper or time.sleep
     dr = f"{begin:%m/%d/%Y}:{end:%m/%d/%Y}"
     url = (API_BASE + REPORT_ID + "/" + parse.quote(section)
            + "?q=report_date=" + parse.quote(dr, safe="/:"))
     last_err = None
+    attempt = 0
     for attempt in range(1, tries + 1):
+        retry = False
+        delay = 0.0
         try:
-            with request.urlopen(request.Request(url), timeout=timeout) as r:
-                payload = json.loads(r.read().decode())
+            with opener(url, timeout) as resp:
+                payload = json.loads(resp.read().decode())
             rows = _extract_rows(payload)
             if rows:
                 print(f"SECTION '{section}': {len(rows)} rows "
                       f"(attempt {attempt})")
                 return rows, None
             last_err = "0 rows returned"
-        except error.HTTPError as e:
-            last_err = f"HTTP {e.code}"
-        except Exception as ex:                     # noqa: BLE001
-            last_err = str(ex)
-        print(f"SECTION '{section}' attempt {attempt}: {last_err}")
-        if attempt < tries:
-            import time
-            time.sleep(5 * attempt)
-    return [], f"section '{section}' failed after {tries} tries: {last_err}"
+            retry = attempt < tries
+            delay = float(USDA_EMPTY_RETRY_SECONDS) if retry else 0.0
+        except error.HTTPError as exc:
+            last_err = f"HTTP {exc.code}"
+            try:
+                exc.close()
+            except Exception:                          # noqa: BLE001
+                pass
+            retry = _retryable_fetch_error(exc) and attempt < tries
+            delay = (_backoff_seconds(attempt, backoff, backoff_cap)
+                     if retry else 0.0)
+        except Exception as exc:                       # noqa: BLE001
+            last_err = str(exc) or exc.__class__.__name__
+            retry = _retryable_fetch_error(exc) and attempt < tries
+            delay = (_backoff_seconds(attempt, backoff, backoff_cap)
+                     if retry else 0.0)
+        extra = f"; retrying in {delay:.0f}s" if retry else ""
+        print(f"SECTION '{section}' attempt {attempt}/{tries}: "
+              f"{last_err}{extra}")
+        if not retry:
+            break
+        if delay > 0:
+            sleeper(delay)
+    return [], (f"section '{section}' failed after {attempt} tries: "
+                f"{last_err}")
 
 
 def fetch_live():
@@ -705,14 +804,137 @@ def _business_days_between(a, b):
     return days
 
 
+def _nth_weekday(year, month, weekday, n):
+    """weekday: Monday=0. n=1 is the first; n=-1 is the last."""
+    if n > 0:
+        d = dt.date(year, month, 1)
+        shift = (weekday - d.weekday()) % 7
+        return d + dt.timedelta(days=shift + 7 * (n - 1))
+    if month == 12:
+        d = dt.date(year + 1, 1, 1) - dt.timedelta(days=1)
+    else:
+        d = dt.date(year, month + 1, 1) - dt.timedelta(days=1)
+    return d - dt.timedelta(days=(d.weekday() - weekday) % 7)
+
+
+def _observed(d):
+    """OPM: Saturday holidays are observed Friday, Sunday holidays Monday."""
+    if d.weekday() == 5:
+        return d - dt.timedelta(days=1)
+    if d.weekday() == 6:
+        return d + dt.timedelta(days=1)
+    return d
+
+
+_HOLIDAYS = {}
+
+
+def federal_holidays(year):
+    """OPM federal holidays for `year`, including observed dates that
+    fall in an adjacent year (New Year's observed on Dec 31)."""
+    hit = _HOLIDAYS.get(year)
+    if hit is not None:
+        return hit
+    fixed = [_observed(dt.date(year, m, day)) for m, day in
+             ((1, 1), (6, 19), (7, 4), (11, 11), (12, 25))]
+    floating = [
+        _nth_weekday(year, 1, 0, 3),    # MLK
+        _nth_weekday(year, 2, 0, 3),    # Washington's Birthday
+        _nth_weekday(year, 5, 0, -1),   # Memorial Day
+        _nth_weekday(year, 9, 0, 1),    # Labor Day
+        _nth_weekday(year, 10, 0, 2),   # Columbus Day
+        _nth_weekday(year, 11, 3, 4),   # Thanksgiving
+    ]
+    hit = set(fixed + floating)
+    _HOLIDAYS[year] = hit
+    return hit
+
+
+def is_federal_holiday(d):
+    years = (d.year - 1, d.year, d.year + 1)
+    return any(d in federal_holidays(y) for y in years)
+
+
+def is_market_day(d):
+    return d.weekday() < 5 and not is_federal_holiday(d)
+
+
+def _as_utc(now):
+    if now is None:
+        return dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=dt.timezone.utc)
+    return now
+
+
+def expected_market_date(now=None):
+    """Most recent completed LM_XB403 session.
+
+    Today counts only when it is a market day and the afternoon report
+    (3:00 PM America/Chicago) is already out. Otherwise walk back over
+    weekends and federal holidays."""
+    ct = _as_utc(now).astimezone(CT)
+    d = ct.date()
+    ready = (ct.hour, ct.minute) >= REPORT_READY
+    if not (is_market_day(d) and ready):
+        d -= dt.timedelta(days=1)
+        for _ in range(21):
+            if is_market_day(d):
+                break
+            d -= dt.timedelta(days=1)
+    return d
+
+
+def _as_date(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    return dt.date.fromisoformat(str(value)[:10])
+
+
+def is_board_stale(last_market_date, now=None):
+    last = _as_date(last_market_date)
+    if last is None:
+        return True
+    return last < expected_market_date(now)
+
+
+def stale_banner_text(last_market_date, now=None):
+    """Visible banner, or None when the board is on the latest session."""
+    if not is_board_stale(last_market_date, now):
+        return None
+    last = _as_date(last_market_date)
+    shown = last.isoformat() if last else "unknown"
+    return f"STALE — data as of {shown}"
+
+
+def market_freshness(last_market, now=None):
+    """Build-time fields a downstream digest can compare without refetching."""
+    clock = _as_utc(now)
+    last = _as_date(last_market)
+    gen = clock.astimezone(dt.timezone.utc).replace(microsecond=0)
+    last_s = last.isoformat() if last else None
+    return {
+        "generated_at": gen.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_utc": gen.strftime("%Y-%m-%d %H:%M UTC"),
+        "last_market_date": last_s,
+        "expected_market_date": expected_market_date(clock).isoformat(),
+        "stale": is_board_stale(last_s, clock),
+    }
+
+
 # ---------------------------------------------------------------------------
 # RENDER
 # ---------------------------------------------------------------------------
-def build(series, cutout, is_demo, warnings):
+def build(series, cutout, is_demo, warnings, now=None):
     analysis, thresholds = analyze(series, cutout)
     last_dates = [pts[-1][0] for pts in series.values() if pts]
     last_market = max(last_dates) if last_dates else None
-    today = dt.date.today()
+    clock = _as_utc(now)
+    today = clock.astimezone(CT).date()
     if last_market and _business_days_between(last_market, today) \
             > STALE_BUSINESS_DAYS:
         warnings.append(f"Newest USDA market date is {last_market.isoformat()}"
@@ -726,9 +948,13 @@ def build(series, cutout, is_demo, warnings):
         prev = cutout[-2] if len(cutout) > 1 else None
         cut_meta = {"date": d.isoformat(), "choice": ch, "select": se,
                     "choice_chg_1d": round(ch - prev[1], 2) if prev else None}
+    fresh = market_freshness(last_market, clock)
     meta = {
-        "generated_utc": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "last_market_date": last_market.isoformat() if last_market else None,
+        "generated_utc": fresh["generated_utc"],
+        "generated_at": fresh["generated_at"],
+        "last_market_date": fresh["last_market_date"],
+        "expected_market_date": fresh["expected_market_date"],
+        "stale": fresh["stale"],
         "is_demo": is_demo, "public": PUBLIC_BUILD,
         "warnings": warnings,
         "cutout": cut_meta,
@@ -764,38 +990,93 @@ def render_html(out):
     return HTML.replace("/*__DATA__*/", "window.APP_DATA = " + payload + ";")
 
 
+def _usda_skip_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        USDA_SKIP_MARK)
+
+
+def _clear_usda_skip_mark():
+    path = _usda_skip_path()
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def _series_unusable(series, cutout):
+    good = sum(1 for v in series.values() if len(v) >= 400)
+    return (good == 0 or not cutout), good
+
+
+def _refuse_public_demo(warnings):
+    """FORCE_DEMO (or any other path that would publish sample data)
+    stays fail-closed. Live outages do not come through here."""
+    msg = ("PUBLIC_BUILD=1 refuses DEMO mode — live USDA data required. "
+           "Fix the fetch or unset PUBLIC_BUILD for local demos.")
+    print("ERROR:", msg)
+    if warnings:
+        print("Warnings:", *warnings, sep="\n  - ")
+    raise SystemExit(2)
+
+
+def _keep_last_board(warnings):
+    """Live USDA data never arrived. Do not write DEMO files and do not
+    fail the job: the workflow skips Pages and SiteGround so the last
+    good board stays up."""
+    msg = ("USDA live data unavailable after retries; "
+           "the board was kept at its last market date. "
+           "Pages and SiteGround deploy skipped. "
+           "DEMO data was not published.")
+    print("::warning::" + msg)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(msg + "\n")
+    with open(_usda_skip_path(), "w", encoding="utf-8") as fh:
+        fh.write(msg + "\n")
+    if warnings:
+        print("Warnings:", *warnings, sep="\n  - ")
+    raise SystemExit(0)
+
+
 # ---------------------------------------------------------------------------
 def main():
+    global PUBLIC_BUILD, FORCE_DEMO
+    PUBLIC_BUILD = bool(os.environ.get("PUBLIC_BUILD"))
+    FORCE_DEMO = bool(os.environ.get("FORCE_DEMO"))
+    _clear_usda_skip_mark()
     warnings = []
     if FORCE_DEMO:
         print("FORCE_DEMO set — DEMO mode (sample data).")
+        if PUBLIC_BUILD:
+            _refuse_public_demo(warnings)
         (series, cutout), is_demo = generate_demo(), True
     else:
         try:
             rows, warnings = fetch_live()
             series, cutout = parse_rows(rows)
-            good = sum(1 for v in series.values() if len(v) >= 400)
-            if good == 0 or not cutout:
+            unusable, good = _series_unusable(series, cutout)
+            if unusable:
                 warnings.append("Live pull returned no usable series — "
-                                "check PRODUCTS mapping. Showing DEMO data.")
+                                "check PRODUCTS mapping.")
+                print("WARNING:", warnings[-1])
+                if PUBLIC_BUILD:
+                    _keep_last_board(warnings)
+                warnings[-1] += " Showing DEMO data."
                 print("WARNING:", warnings[-1])
                 (series, cutout), is_demo = generate_demo(), True
             else:
                 is_demo = False
                 print(f"LIVE mode: {good}/{len(PRODUCTS)} product series.")
         except Exception as e:                        # noqa: BLE001
-            warnings.append(f"Live fetch failed ({e}). Showing DEMO data.")
+            warnings.append(f"Live fetch failed ({e}).")
+            print("WARNING:", warnings[-1])
+            if PUBLIC_BUILD:
+                _keep_last_board(warnings)
+            warnings[-1] += " Showing DEMO data."
             print("WARNING:", warnings[-1])
             (series, cutout), is_demo = generate_demo(), True
 
     if is_demo and PUBLIC_BUILD:
-        # Never publish sample LOCK/HOLD signals to Pages / board.gstmeat.com.
-        msg = ("PUBLIC_BUILD=1 refuses DEMO mode — live USDA data required. "
-               "Fix the fetch or unset PUBLIC_BUILD for local demos.")
-        print("ERROR:", msg)
-        if warnings:
-            print("Warnings:", *warnings, sep="\n  - ")
-        raise SystemExit(2)
+        _refuse_public_demo(warnings)
 
     out = build(series, cutout, is_demo, warnings)
     print(f"Built dashboard for {len(out['products'])} products. "

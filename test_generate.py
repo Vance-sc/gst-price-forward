@@ -3,8 +3,12 @@
 Fixture rows use the exact schema observed live on the LMR DataMart,
 including the ".00" no-trade rows that broke production v0."""
 
+import io
+import os
 import math
+import contextlib
 import datetime as dt
+from urllib import error as urlerror
 import generate as g
 
 FAILS = []
@@ -302,6 +306,358 @@ _t, _m, _v, _c = g.apply_lock_bar("LOCK", g.MSG_LOCK, "round", 60, False)
 check("apply_lock_bar: falling -> SPLIT", _t == "SPLIT" and _m == g.MSG_FALLING)
 _t2, *_r = g.apply_lock_bar("HOLD", g.MSG_HOLD, "round", 60, False)
 check("guard never touches non-LOCK", _t2 == "HOLD")
+
+# ---------------------------------------------------------------- USDA retries
+class _Body:
+    def __init__(self, raw):
+        self.raw = raw
+
+    def read(self):
+        return self.raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _http(code):
+    return urlerror.HTTPError("https://example.test", code, "x", {}, None)
+
+
+def _scripted(events):
+    sleeps, calls = [], {"n": 0}
+
+    def opener(url, timeout):
+        calls["n"] += 1
+        item = events[calls["n"] - 1]
+        if isinstance(item, Exception):
+            raise item
+        return _Body(item)
+
+    return opener, sleeps.append, calls, sleeps
+
+
+_begin, _end = dt.date(2026, 11, 1), dt.date(2026, 11, 6)
+_op, _sl, _calls, _sleeps = _scripted([
+    _http(500), _http(502),
+    b'{"results":[{"report_date":"11/06/2026"}]}',
+])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=6, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("5xx retries with exponential backoff then succeeds",
+      _err is None and len(_rows) == 1 and _calls["n"] == 3
+      and _sleeps == [15, 30], str((_err, _calls, _sleeps)))
+
+_op, _sl, _calls, _sleeps = _scripted([_http(404)])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=6, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("4xx is not retried",
+      _rows == [] and _calls["n"] == 1 and _sleeps == []
+      and "HTTP 404" in _err and "after 1 tries" in _err, str(_err))
+
+_op, _sl, _calls, _sleeps = _scripted([
+    TimeoutError("timed out"), b'{"results":[{"a": 1}]}',
+])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=6, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("timeout retries then succeeds",
+      _err is None and _calls["n"] == 2 and _sleeps == [15], str(_sleeps))
+
+_op, _sl, _calls, _sleeps = _scripted([
+    b'{"results":[]}', b'{"results":[{"a": 1}]}',
+])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=6, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("empty body uses the short retry, not the long backoff",
+      _err is None and _sleeps == [g.USDA_EMPTY_RETRY_SECONDS], str(_sleeps))
+
+_op, _sl, _calls, _sleeps = _scripted([_http(500), _http(500), _http(503)])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=3, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("5xx gives up after the attempt budget",
+      _rows == [] and _calls["n"] == 3 and _sleeps == [15, 30]
+      and "after 3 tries" in _err and "HTTP 503" in _err, str((_err, _sleeps)))
+
+_op, _sl, _calls, _sleeps = _scripted([ValueError("bad request shape")])
+_rows, _err = g._fetch_section(
+    "Choice Cuts", _begin, _end, tries=4, timeout=1, backoff=15,
+    backoff_cap=180, opener=_op, sleeper=_sl)
+check("non-transient errors are not retried",
+      _calls["n"] == 1 and _sleeps == [] and "bad request shape" in _err,
+      str(_err))
+
+check("backoff cap holds the last waits down",
+      g._backoff_seconds(1, 15, 180) == 15
+      and g._backoff_seconds(5, 15, 180) == 180)
+
+_fetch_env = ("USDA_FETCH_TRIES", "USDA_FETCH_TIMEOUT",
+              "USDA_FETCH_BACKOFF", "USDA_FETCH_BACKOFF_CAP")
+_saved_fetch = {k: os.environ.pop(k, None) for k in _fetch_env}
+try:
+    _cfg = g._usda_fetch_settings()
+    _waits = [g._backoff_seconds(i, _cfg["backoff"], _cfg["backoff_cap"])
+              for i in range(1, _cfg["tries"])]
+    check("default USDA retry is 6 tries spanning several minutes",
+          _cfg["tries"] == 6 and sum(_waits) >= 300, str((_cfg, _waits)))
+    os.environ["USDA_FETCH_TRIES"] = "4"
+    os.environ["USDA_FETCH_BACKOFF"] = "10"
+    _cfg2 = g._usda_fetch_settings()
+    check("USDA retry counts are configurable",
+          _cfg2["tries"] == 4 and _cfg2["backoff"] == 10, str(_cfg2))
+finally:
+    for _k, _v in _saved_fetch.items():
+        os.environ.pop(_k, None)
+        if _v is not None:
+            os.environ[_k] = _v
+os.environ.pop("USDA_FETCH_TRIES", None)
+os.environ.pop("USDA_FETCH_BACKOFF", None)
+
+
+def _call_main():
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            g.main()
+        except SystemExit as exc:
+            return exc.code, buf.getvalue()
+    return 0, buf.getvalue()
+
+
+def _restore_main(saved):
+    g.fetch_live = saved["fetch"]
+    g.parse_rows = saved["parse"]
+    g.generate_demo = saved["demo"]
+    g.build = saved["build"]
+    g.PUBLIC_BUILD = saved["public"]
+    g.FORCE_DEMO = saved["force"]
+    for key, val in saved["env"].items():
+        if val is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = val
+    g._clear_usda_skip_mark()
+
+
+def _patch_main(env, **fns):
+    keys = ("PUBLIC_BUILD", "FORCE_DEMO", "GITHUB_STEP_SUMMARY")
+    saved = {
+        "fetch": g.fetch_live, "parse": g.parse_rows,
+        "demo": g.generate_demo, "build": g.build,
+        "public": g.PUBLIC_BUILD, "force": g.FORCE_DEMO,
+        "env": {k: os.environ.get(k) for k in keys},
+    }
+    for key in keys:
+        os.environ.pop(key, None)
+    os.environ.update(env)
+    for name, fn in fns.items():
+        setattr(g, name, fn)
+    return saved
+
+
+def _no_demo():
+    raise AssertionError("DEMO data must not be built")
+
+
+_summary = os.path.join(os.path.dirname(os.path.abspath(g.__file__)),
+                        "_test_step_summary.txt")
+_saved = _patch_main({"PUBLIC_BUILD": "1", "GITHUB_STEP_SUMMARY": _summary},
+                     fetch_live=lambda: (_ for _ in ()).throw(
+                         TimeoutError("timed out")),
+                     generate_demo=_no_demo)
+try:
+    if os.path.exists(_summary):
+        os.remove(_summary)
+    _code, _out = _call_main()
+    _mark = open(g._usda_skip_path(), encoding="utf-8").read()
+    _sum = open(_summary, encoding="utf-8").read()
+    check("PUBLIC_BUILD outage keeps the job green and skips DEMO",
+          _code == 0 and "AssertionError" not in _out
+          and "::warning::" in _out
+          and "kept at its last market date" in _out
+          and "kept at its last market date" in _mark
+          and "kept at its last market date" in _sum
+          and "DEMO data was not published" in _out,
+          f"code={_code}")
+finally:
+    _restore_main(_saved)
+    if os.path.exists(_summary):
+        os.remove(_summary)
+
+_saved = _patch_main({"PUBLIC_BUILD": "1"},
+                     fetch_live=lambda: ([], []),
+                     generate_demo=_no_demo)
+try:
+    _code, _out = _call_main()
+    check("PUBLIC_BUILD empty pull skips deploy and does not demo",
+          _code == 0 and os.path.isfile(g._usda_skip_path())
+          and "kept at its last market date" in _out
+          and "AssertionError" not in _out,
+          f"code={_code} out={_out[:400]}")
+finally:
+    _restore_main(_saved)
+
+_saved = _patch_main({"PUBLIC_BUILD": "1", "FORCE_DEMO": "1"},
+                     fetch_live=lambda: (_ for _ in ()).throw(
+                         AssertionError("should not fetch")),
+                     generate_demo=_no_demo)
+try:
+    _code, _out = _call_main()
+    check("PUBLIC_BUILD + FORCE_DEMO still fails closed",
+          _code == 2 and "refuses DEMO mode" in _out
+          and not os.path.isfile(g._usda_skip_path()),
+          f"code={_code}")
+finally:
+    _restore_main(_saved)
+
+_seen = {}
+_day = dt.date(2026, 11, 6)
+_series = {p["key"]: [(_day, 100.0, 1000.0)] * 400 for p in g.PRODUCTS}
+_cut = [(_day, 300.0, 280.0)]
+
+
+def _fake_build(series, cutout, is_demo, warnings, now=None):
+    _seen["build"] = (is_demo, len(series))
+    return {"products": {"round": {}}, "meta": {}}
+
+
+_saved = _patch_main(
+    {"PUBLIC_BUILD": "1"},
+    fetch_live=lambda: (["row"], []),
+    parse_rows=lambda rows: (_series, _cut),
+    generate_demo=_no_demo,
+    build=_fake_build)
+try:
+    _code, _out = _call_main()
+    check("PUBLIC_BUILD with live data still builds and does not skip",
+          _code == 0 and _seen.get("build") == (False, len(g.PRODUCTS))
+          and not os.path.isfile(g._usda_skip_path())
+          and "LIVE mode" in _out, f"code={_code} seen={_seen}")
+finally:
+    _restore_main(_saved)
+
+def _local_demo():
+    _seen["demo"] = True
+    return _series, _cut
+
+
+_seen.clear()
+_saved = _patch_main(
+    {},
+    fetch_live=lambda: (_ for _ in ()).throw(RuntimeError("HTTP 500")),
+    generate_demo=_local_demo,
+    build=_fake_build)
+try:
+    _code, _out = _call_main()
+    check("local fetch failure still falls back to DEMO",
+          _code == 0 and _seen.get("demo") and _seen.get("build", (None,))[0]
+          and not os.path.isfile(g._usda_skip_path()),
+          f"code={_code} seen={_seen}")
+finally:
+    _restore_main(_saved)
+
+# ---------------------------------------------------------------- staleness
+def _ct(y, m, d, hh, mm=0):
+    return dt.datetime(y, m, d, hh, mm, tzinfo=g.CT)
+
+
+check("Veterans Day 2026 is not a market day",
+      g.is_federal_holiday(dt.date(2026, 11, 11))
+      and not g.is_market_day(dt.date(2026, 11, 11)))
+check("expected session on Veterans Day evening is the day before",
+      g.expected_market_date(_ct(2026, 11, 11, 16)) == dt.date(2026, 11, 10))
+check("Nov 6 board is stale on Veterans Day; Nov 10 is not",
+      g.is_board_stale("2026-11-06", _ct(2026, 11, 11, 16))
+      and not g.is_board_stale("2026-11-10", _ct(2026, 11, 11, 16)))
+check("stale banner names the market date",
+      g.stale_banner_text("2026-11-06", _ct(2026, 11, 11, 16))
+      == "STALE — data as of 2026-11-06"
+      and g.stale_banner_text("2026-11-10", _ct(2026, 11, 11, 16)) is None)
+check("before 3pm Central the current session is not completed",
+      g.expected_market_date(_ct(2026, 11, 16, 10)) == dt.date(2026, 11, 13)
+      and g.expected_market_date(_ct(2026, 11, 16, 15)) == dt.date(2026, 11, 16))
+check("weekend expected date is the previous market day",
+      g.expected_market_date(_ct(2026, 11, 14, 16)) == dt.date(2026, 11, 13)
+      and g.expected_market_date(_ct(2026, 11, 15, 12)) == dt.date(2026, 11, 13))
+check("Thanksgiving 2026 is closed and the Friday after is open",
+      g.expected_market_date(_ct(2026, 11, 26, 16)) == dt.date(2026, 11, 25)
+      and g.expected_market_date(_ct(2026, 11, 27, 16)) == dt.date(2026, 11, 27))
+check("Independence Day 2026 observed Friday (July 4 is Saturday)",
+      g.expected_market_date(_ct(2026, 7, 3, 16)) == dt.date(2026, 7, 2)
+      and g.expected_market_date(_ct(2026, 7, 6, 16)) == dt.date(2026, 7, 6))
+check("Sunday holiday observed Monday (Christmas 2022)",
+      g.is_federal_holiday(dt.date(2022, 12, 26))
+      and g.expected_market_date(_ct(2022, 12, 26, 16)) == dt.date(2022, 12, 23))
+check("New Year 2022 observed the prior Friday",
+      g.is_federal_holiday(dt.date(2021, 12, 31))
+      and g.expected_market_date(_ct(2021, 12, 31, 16)) == dt.date(2021, 12, 30))
+_fresh = g.market_freshness(dt.date(2026, 11, 6), _ct(2026, 11, 16, 16))
+check("freshness fields for digests",
+      _fresh["last_market_date"] == "2026-11-06"
+      and _fresh["expected_market_date"] == "2026-11-16"
+      and _fresh["generated_at"] == "2026-11-16T22:00:00Z"
+      and _fresh["stale"] is True
+      and _fresh["generated_utc"] == "2026-11-16 22:00 UTC", str(_fresh))
+check("missing market date is stale",
+      g.is_board_stale(None, _ct(2026, 11, 16, 16))
+      and g.stale_banner_text(None, _ct(2026, 11, 16, 16))
+      == "STALE — data as of unknown")
+
+_old_analyze = g.analyze
+g.analyze = lambda series, cutout: (
+    {}, {30: {"lock": 68.0, "hold": 40.0}, 60: {"lock": 66.0, "hold": 39.5}})
+try:
+    _out = g.build(
+        {"round": [(dt.date(2026, 11, 6), 100.0, 10.0)]},
+        [(dt.date(2026, 11, 6), 300.0, 280.0)],
+        False, [], now=_ct(2026, 11, 16, 16))
+    _meta = _out["meta"]
+    check("build publishes staleness fields",
+          _meta["last_market_date"] == "2026-11-06"
+          and _meta["expected_market_date"] == "2026-11-16"
+          and _meta["generated_at"] == "2026-11-16T22:00:00Z"
+          and _meta["stale"] is True, str({k: _meta[k] for k in (
+              "last_market_date", "expected_market_date",
+              "generated_at", "stale")}))
+    _html = open(os.path.join(os.path.dirname(os.path.abspath(g.__file__)),
+                              "index.html"), encoding="utf-8").read()
+    check("page renders the stale banner and the market date",
+          'class="stale"' in _html and "STALE — data as of" in _html
+          and "2026-11-06" in _html and '"stale": true' in _html)
+finally:
+    g.analyze = _old_analyze
+    _here = os.path.dirname(os.path.abspath(g.__file__))
+    for _name in ("data.json", "index.html"):
+        _p = os.path.join(_here, _name)
+        if os.path.isfile(_p):
+            os.remove(_p)
+    _pub = os.path.join(_here, "public", ".htaccess")
+    if os.path.isfile(_pub):
+        os.remove(_pub)
+    _pubdir = os.path.join(_here, "public")
+    if os.path.isdir(_pubdir) and not os.listdir(_pubdir):
+        os.rmdir(_pubdir)
+
+_root = os.path.dirname(os.path.abspath(g.__file__))
+_upd = open(os.path.join(_root, ".github", "workflows", "update.yml"),
+            encoding="utf-8").read()
+_ka = open(os.path.join(_root, ".github", "workflows", "keepalive.yml"),
+           encoding="utf-8").read()
+check("update workflow has a same-day retry cron",
+      'cron: "0 2 * * 2-6"' in _upd and 'cron: "0 22 * * 1-5"' in _upd)
+check("update workflow skips deploy when USDA is down or board is current",
+      ".usda_skip" in _upd and "freshness" in _upd
+      and "steps.build.outputs.skip != 'true'" in _upd)
+check("keepalive enables both workflows with the Actions API",
+      "actions: write" in _ka and "/enable" in _ka
+      and "update.yml" in _ka and "keepalive.yml" in _ka
+      and "uses:" not in _ka and "workflow_dispatch" in _ka)
 
 print()
 if FAILS:

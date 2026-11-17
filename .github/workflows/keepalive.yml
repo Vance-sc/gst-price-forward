@@ -1,0 +1,35 @@
+name: Keep scheduled workflows enabled
+
+# Public repos turn scheduled workflows off after 60 days without repository
+# activity (state disabled_inactivity). While this workflow is still
+# enabled, the monthly run calls the Actions enable API for the daily board
+# workflow and for itself. That is the preventive keepalive. It does not
+# create a commit.
+#
+# A workflow GitHub has already disabled will not start on its schedule, so
+# this job cannot revive one after the fact. After a disable, enable once
+# from the Actions tab (or the API). workflow_dispatch is here for a manual
+# run while the workflow is enabled; it also does not fire once disabled.
+on:
+  schedule:
+    - cron: "17 14 1 * *"   # 14:17 UTC on the 1st
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable board update and this keepalive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          for wf in update.yml keepalive.yml; do
+            echo "Enabling ${wf}"
+            gh api --method PUT \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/enable" \
+              --silent
+          done

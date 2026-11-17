@@ -40,6 +40,8 @@ HTML = r"""<!DOCTYPE html>
   .btn-pdf:hover{background:#0d5f40;color:#fff}
   .demo{background:var(--amber);color:#fff;text-align:center;font-weight:700;
        padding:7px;font-size:14px;letter-spacing:.4px}
+  .stale{background:var(--red);color:#fff;text-align:center;font-weight:700;
+       padding:8px 12px;font-size:15px;letter-spacing:.3px}
   .warn{background:#fdf3e3;border:1px solid var(--amber);color:#7a5410;
        border-radius:8px;padding:9px 14px;margin:16px 0 0;font-size:13px}
   .board{background:#fff;border:1px solid var(--line);border-radius:10px;
@@ -176,6 +178,11 @@ if(D.meta.is_demo){
   document.getElementById('demoBanner').innerHTML =
     '<div class="demo" role="alert">SAMPLE DATA — not real market prices. '+
     'The live USDA fetch failed or demo mode was forced; see the Actions log.</div>';
+}
+if(D.meta.stale){
+  var asof = D.meta.last_market_date || 'unknown';
+  document.getElementById('demoBanner').insertAdjacentHTML('beforeend',
+    '<div class="stale" role="alert">STALE — data as of '+esc(asof)+'</div>');
 }
 if(D.meta.warnings && D.meta.warnings.length){
   document.getElementById('warnings').innerHTML = D.meta.warnings.map(w=>

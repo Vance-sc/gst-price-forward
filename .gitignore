@@ -10,3 +10,4 @@ backtest_results.json
 # Confidential GST figures — never publish
 gst_private.py
 validation_new.json
+.usda_skip
