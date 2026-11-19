@@ -9,6 +9,9 @@ name: Update forward-buy dashboard
 #
 # USDA LMR is a keyless public API. SiteGround FTPS uses repo secrets.
 on:
+  # Crons, Pacific time: "0 22 * * 1-5" is 22:00 UTC Mon-Fri (2:00 PM PST /
+  # 3:00 PM PDT, early afternoon, after the PM report) and "0 2 * * 2-6" is
+  # 02:00 UTC Tue-Sat (6:00 PM PST / 7:00 PM PDT, that same weekday evening).
   schedule:
     - cron: "0 22 * * 1-5"   # 22:00 UTC Mon-Fri, early afternoon PT, after the PM report
     - cron: "0 2 * * 2-6"    # 02:00 UTC Tue-Sat = that same weekday evening PT
