@@ -608,6 +608,69 @@ check("missing market date is stale",
       g.is_board_stale(None, _ct(2026, 11, 16, 16))
       and g.stale_banner_text(None, _ct(2026, 11, 16, 16))
       == "STALE — data as of unknown")
+_aft = _ct(2026, 11, 16, 16)
+check("stale is true only when last_market_date < expected_market_date",
+      g.expected_market_date(_aft) == dt.date(2026, 11, 16)
+      and g.is_board_stale("2026-11-13", _aft) is True
+      and g.is_board_stale("2026-11-16", _aft) is False
+      and g.is_board_stale("2026-11-17", _aft) is False)
+_before = _ct(2026, 11, 16, 10)
+check("before the cutoff, equality uses the previous session",
+      g.expected_market_date(_before) == dt.date(2026, 11, 13)
+      and g.is_board_stale("2026-11-13", _before) is False
+      and g.is_board_stale("2026-11-12", _before) is True)
+_h26 = g.market_holiday_dates(2026, 2026)
+check("market holidays are the federal calendar",
+      _h26 == sorted(d.isoformat() for d in g.federal_holidays(2026))
+      and "2026-11-11" in _h26 and "2026-07-03" in _h26
+      and "2026-11-26" in _h26 and "2026-11-16" not in _h26,
+      str(_h26))
+_clk = g.client_market_clock(2026)
+check("page clock is 1:00 PM Pacific, the Central publication cutoff",
+      _clk == {"timezone": "America/Los_Angeles", "report_ready": [13, 0]},
+      str(_clk))
+
+
+def _expected_in_la(now, clock=_clk):
+    local = now.astimezone(g.PT)
+    rh, rm = clock["report_ready"]
+    ready = (local.hour, local.minute) >= (rh, rm)
+    day = local.date()
+    hol = set()
+    for y in (day.year - 1, day.year, day.year + 1):
+        hol.update(g.federal_holidays(y))
+
+    def is_mkt(d):
+        return d.weekday() < 5 and d not in hol
+
+    if not (is_mkt(day) and ready):
+        day -= dt.timedelta(days=1)
+        for _ in range(21):
+            if is_mkt(day):
+                break
+            day -= dt.timedelta(days=1)
+    return day
+
+
+_mismatch = []
+_t = dt.datetime(2026, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
+_end = dt.datetime(2027, 2, 1, 0, 0, tzinfo=dt.timezone.utc)
+while _t < _end:
+    _got, _want = _expected_in_la(_t), g.expected_market_date(_t)
+    if _got != _want:
+        _mismatch.append((_t.isoformat(), _got.isoformat(), _want.isoformat()))
+        if len(_mismatch) >= 5:
+            break
+    _t += dt.timedelta(hours=1)
+_pt_ready = dt.datetime(2026, 11, 16, 21, 0, tzinfo=dt.timezone.utc)   # 1:00 PM PST
+_pt_early = dt.datetime(2026, 11, 16, 20, 59, tzinfo=dt.timezone.utc)  # 12:59 PM PST
+check("Los Angeles cutoff matches expected_market_date",
+      not _mismatch
+      and _expected_in_la(_pt_ready) == dt.date(2026, 11, 16)
+      and g.expected_market_date(_pt_ready) == dt.date(2026, 11, 16)
+      and _expected_in_la(_pt_early) == dt.date(2026, 11, 13)
+      and g.expected_market_date(_pt_early) == dt.date(2026, 11, 13),
+      str(_mismatch))
 
 _old_analyze = g.analyze
 g.analyze = lambda series, cutout: (
@@ -625,11 +688,33 @@ try:
           and _meta["stale"] is True, str({k: _meta[k] for k in (
               "last_market_date", "expected_market_date",
               "generated_at", "stale")}))
+    check("build publishes the shared holiday calendar",
+          _meta["market_holidays"] == g.market_holiday_dates(2025, 2034)
+          and "2026-11-11" in _meta["market_holidays"]
+          and _meta["market_clock"] == g.client_market_clock(2026)
+          and _meta["market_clock"]["timezone"] == "America/Los_Angeles")
     _html = open(os.path.join(os.path.dirname(os.path.abspath(g.__file__)),
                               "index.html"), encoding="utf-8").read()
     check("page renders the stale banner and the market date",
           'class="stale"' in _html and "STALE — data as of" in _html
           and "2026-11-06" in _html and '"stale": true' in _html)
+    check("page recomputes staleness from the shared calendar",
+          "function expectedMarketDate" in _html
+          and "function boardIsStale" in _html
+          and "market_holidays" in _html
+          and "America/Los_Angeles" in _html
+          and "D.meta.stale" in _html
+          and '"market_clock"' in _html)
+    _cur = g.build(
+        {"round": [(dt.date(2026, 11, 16), 100.0, 10.0)]},
+        [(dt.date(2026, 11, 16), 300.0, 280.0)],
+        False, [], now=_ct(2026, 11, 16, 16))
+    check("build stale is false when last_market_date equals expected",
+          _cur["meta"]["stale"] is False
+          and _cur["meta"]["last_market_date"] == "2026-11-16"
+          and _cur["meta"]["expected_market_date"] == "2026-11-16"
+          and not (_cur["meta"]["last_market_date"]
+                   < _cur["meta"]["expected_market_date"]))
 finally:
     g.analyze = _old_analyze
     _here = os.path.dirname(os.path.abspath(g.__file__))

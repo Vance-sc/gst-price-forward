@@ -179,7 +179,79 @@ if(D.meta.is_demo){
     '<div class="demo" role="alert">SAMPLE DATA — not real market prices. '+
     'The live USDA fetch failed or demo mode was forced; see the Actions log.</div>';
 }
-if(D.meta.stale){
+// Expected session, same rules as generate.expected_market_date: weekdays,
+// meta.market_holidays, and the publication cutoff. The clock is the current
+// instant in America/Los_Angeles (3:00 PM Central == 1:00 PM Pacific).
+// meta.stale is frozen at build time, so a true value stays stale even when
+// the dates have caught up, and a false value still banners once the market
+// date falls behind.
+function zonedParts(date, timeZone){
+  var fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+  var bag = {};
+  fmt.formatToParts(date).forEach(function(part){
+    if(part.type !== 'literal') bag[part.type] = part.value;
+  });
+  function num(v){
+    var n = parseInt(String(v == null ? '' : v).replace(/[^\d]/g, ''), 10);
+    return isNaN(n) ? 0 : n;
+  }
+  var hour = num(bag.hour);
+  var year = num(bag.year), month = num(bag.month), day = num(bag.day);
+  // Some engines report midnight as 24:00 on the day that just ended.
+  if(hour === 24){
+    hour = 0;
+    var rolled = new Date(Date.UTC(year, month - 1, day));
+    rolled.setUTCDate(rolled.getUTCDate() + 1);
+    year = rolled.getUTCFullYear();
+    month = rolled.getUTCMonth() + 1;
+    day = rolled.getUTCDate();
+  }
+  return {year:year, month:month, day:day, hour:hour, minute:num(bag.minute)};
+}
+function isoYMD(y, m, d){
+  return y + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+}
+function expectedMarketDate(now){
+  var clock = D.meta.market_clock || {};
+  var tz = clock.timezone || 'America/Los_Angeles';
+  var ready = clock.report_ready || [13, 0];
+  var rh = +ready[0], rm = +ready[1];
+  var hol = {};
+  (D.meta.market_holidays || []).forEach(function(s){ hol[s] = 1; });
+  function prev(y, m, d){
+    var t = new Date(Date.UTC(y, m - 1, d));
+    t.setUTCDate(t.getUTCDate() - 1);
+    return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()];
+  }
+  function isMarket(y, m, d){
+    var wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if(wd === 0 || wd === 6) return false;
+    return !hol[isoYMD(y, m, d)];
+  }
+  var p = zonedParts(now, tz);
+  var y = p.year, m = p.month, d = p.day;
+  var readyNow = p.hour > rh || (p.hour === rh && p.minute >= rm);
+  if(!(isMarket(y, m, d) && readyNow)){
+    var step = prev(y, m, d);
+    y = step[0]; m = step[1]; d = step[2];
+    for(var i = 0; i < 21 && !isMarket(y, m, d); i++){
+      step = prev(y, m, d);
+      y = step[0]; m = step[1]; d = step[2];
+    }
+  }
+  return isoYMD(y, m, d);
+}
+function boardIsStale(now){
+  if(D.meta.stale) return true;
+  var last = D.meta.last_market_date;
+  if(!last) return true;
+  return String(last).slice(0, 10) < expectedMarketDate(now);
+}
+if(boardIsStale(new Date())){
   var asof = D.meta.last_market_date || 'unknown';
   document.getElementById('demoBanner').insertAdjacentHTML('beforeend',
     '<div class="stale" role="alert">STALE — data as of '+esc(asof)+'</div>');
