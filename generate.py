@@ -224,6 +224,9 @@ USDA_SKIP_MARK = ".usda_skip"  # CI: live data missing, do not deploy
 # so a report-less holiday is not flagged stale.
 REPORT_READY = (15, 0)
 CT = ZoneInfo("America/Chicago")
+# The page reads "now" in Pacific. 3:00 PM Central is 1:00 PM Pacific;
+# the two zones stay two hours apart because both observe US DST.
+PT = ZoneInfo("America/Los_Angeles")
 
 
 # ---------------------------------------------------------------------------
@@ -859,6 +862,43 @@ def is_market_day(d):
     return d.weekday() < 5 and not is_federal_holiday(d)
 
 
+def market_holiday_dates(start_year, end_year):
+    """Sorted ISO dates from federal_holidays for an inclusive year span.
+
+    Observed dates that fall in an adjacent year (New Year's on December 31)
+    are included. data.json publishes this list so the page walks the same
+    calendar instead of a second copy of the rules.
+    """
+    days = set()
+    for year in range(int(start_year), int(end_year) + 1):
+        days.update(federal_holidays(year))
+    return [d.isoformat() for d in sorted(days)]
+
+
+def client_market_clock(year=None):
+    """Timezone and cutoff the page uses to recompute expected_market_date.
+
+    The browser takes the current instant in America/Los_Angeles. The
+    publication cutoff is REPORT_READY in America/Chicago, expressed in
+    Pacific (1:00 PM when the Central cutoff is 3:00 PM). If standard time
+    and daylight time ever disagree, fall back to the Chicago clock so the
+    page still matches expected_market_date.
+    """
+    year = int(year or dt.date.today().year)
+
+    def as_pt(month, day):
+        sample = dt.datetime(year, month, day, REPORT_READY[0], REPORT_READY[1],
+                             tzinfo=CT).astimezone(PT)
+        return (sample.hour, sample.minute)
+
+    winter, summer = as_pt(1, 15), as_pt(7, 15)
+    if winter != summer:
+        return {"timezone": "America/Chicago",
+                "report_ready": [REPORT_READY[0], REPORT_READY[1]]}
+    return {"timezone": "America/Los_Angeles",
+            "report_ready": [winter[0], winter[1]]}
+
+
 def _as_utc(now):
     if now is None:
         return dt.datetime.now(dt.timezone.utc)
@@ -949,12 +989,17 @@ def build(series, cutout, is_demo, warnings, now=None):
         cut_meta = {"date": d.isoformat(), "choice": ch, "select": se,
                     "choice_chg_1d": round(ch - prev[1], 2) if prev else None}
     fresh = market_freshness(last_market, clock)
+    cal_year = clock.astimezone(CT).year
     meta = {
         "generated_utc": fresh["generated_utc"],
         "generated_at": fresh["generated_at"],
         "last_market_date": fresh["last_market_date"],
         "expected_market_date": fresh["expected_market_date"],
         "stale": fresh["stale"],
+        # Shared with the page. Wide enough that a missed rebuild still
+        # has the observed New Year's at the far end of the span.
+        "market_holidays": market_holiday_dates(cal_year - 1, cal_year + 8),
+        "market_clock": client_market_clock(cal_year),
         "is_demo": is_demo, "public": PUBLIC_BUILD,
         "warnings": warnings,
         "cutout": cut_meta,

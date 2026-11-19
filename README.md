@@ -113,9 +113,16 @@ https://mpr.datamart.ams.usda.gov/services/v1.1/reports/2453/<Section>
 Central) and is not published on weekends or US federal holidays, including
 Veterans Day. `data.json` meta keeps `last_market_date` and adds
 `generated_at` (UTC), `expected_market_date` (the most recent completed
-session), and `stale` (true when the market date is older than that
-session). The page and `board.pdf` show `STALE — data as of <date>` in
-that case. A gap of more than 4 business days still adds the longer warning.
+session), and `stale` (true when `last_market_date` is older than
+`expected_market_date` at build time). The page and `board.pdf` show
+`STALE — data as of <date>` in that case. `stale` does not move if no later
+build runs. The page recomputes the expected session in the browser on load
+from the current time in `America/Los_Angeles`, using `market_holidays` and
+`market_clock` (the same weekdays, federal holidays, and publication cutoff).
+It shows the banner when `last_market_date` is behind that date, and also
+when `stale` is already true. Digests and other consumers should compare
+`last_market_date` to the current expected market date rather than trusting
+`stale` alone. A gap of more than 4 business days still adds the longer warning.
 Live fetches retry HTTP 5xx and timeouts with exponential backoff
 (`USDA_FETCH_TRIES`, `USDA_FETCH_BACKOFF`, `USDA_FETCH_BACKOFF_CAP`,
 `USDA_FETCH_TIMEOUT`) before that stale board is left in place.
