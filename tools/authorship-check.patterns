@@ -1,0 +1,51 @@
+# authorship-check.patterns
+#
+# BLOCKED PATTERNS. This is the only file in the kit that spells out the
+# wording the check looks for. tools/authorship-check.sh never scans this
+# file, .authorship-check.conf or itself.
+#
+# Format, one rule per line:   <scope> <type> <label> <pattern>
+#   scope    msg      commit messages, PR title and PR body
+#            content  added lines in staged changes / pull request diffs
+#            both     both of the above
+#   type     word     pattern must stand alone: not touching a letter,
+#                     digit or underscore on either side
+#            re       plain extended regular expression (POSIX ERE)
+#            trailer  message trailer "<pattern>: value"; blocked unless the
+#                     value is exactly one of the allow_identity entries
+#   label    short name printed with each hit
+#   pattern  lowercase ERE (lines are lowercased before matching).
+#            Avoid \b, \d, {n} and other non-POSIX syntax.
+
+# --- message trailers --------------------------------------------------
+msg      trailer co-authored-by-trailer  co-authored-by
+msg      trailer signed-off-by-trailer   signed-off-by
+
+# --- added content: any co-author trailer at all ----------------------
+content  re      co-authored-by-line     co-authored-by[ \t]*:
+
+# --- robot emoji (U+1F916) --------------------------------------------
+both     re      robot-emoji             🤖
+
+# --- "generated with/by" ----------------------------------------------
+msg      re      generated-line          (^|[^a-z0-9_])generated[ \t]+(with|by)([^a-z0-9_]|$)
+content  re      generated-credit        (^|[^a-z0-9_])generated[ \t]+(with|by)[^a-z0-9_](.*[^a-z0-9_])?(claude|anthropic|openai|chatgpt|gpt-?[0-9]|copilot|gemini|codex|cursor|devin|ai([^a-z0-9_]|$))
+
+# --- tool and vendor names --------------------------------------------
+both     word    tool-name               claude
+both     word    tool-name               anthropic
+both     word    tool-name               openai
+both     word    tool-name               chatgpt
+both     re      tool-name               (^|[^a-z0-9_])gpt-?[345]
+both     word    tool-name               copilot
+both     word    tool-name               gemini
+both     word    tool-name               codex
+both     word    tool-name               cursor[ \t-]*agent
+both     re      tool-name               (^|[^a-z0-9_])cursor\.(com|sh)
+both     re      tool-name               made[ \t]+with[ \t]+cursor
+both     word    tool-name               devin
+
+# --- generic AI credit wording ----------------------------------------
+both     word    ai-credit               ai-generated
+both     re      ai-credit               (generated|written|created|authored)[ \t]+(by|with)[ \t]+(an[ \t]+)?ai([^a-z0-9_]|$)
+both     word    ai-credit               ai[ \t]+assistant

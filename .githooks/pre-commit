@@ -1,0 +1,3 @@
+#!/bin/sh
+# Checks commit identity, branch name and staged changes.
+exec sh "$(git rev-parse --show-toplevel)/tools/authorship-check.sh" pre-commit

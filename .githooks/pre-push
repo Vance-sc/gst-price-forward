@@ -1,0 +1,3 @@
+#!/bin/sh
+# Checks every commit and branch name being pushed (refs arrive on stdin).
+exec sh "$(git rev-parse --show-toplevel)/tools/authorship-check.sh" pre-push "$@"

@@ -1,0 +1,7 @@
+# Keep the authorship check files LF on every platform (Windows checkouts
+# with CRLF would break the shell script).
+tools/authorship-check.sh text eol=lf
+tools/install-hooks.sh text eol=lf
+tools/authorship-check.patterns text eol=lf
+.authorship-check.conf text eol=lf
+.githooks/* text eol=lf

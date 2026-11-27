@@ -1,0 +1,30 @@
+name: authorship-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  authorship-check:
+    name: authorship-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out pull request with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check commits, branch name, title, description and added lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          AUTHORSHIP_PR_TITLE: ${{ github.event.pull_request.title }}
+          AUTHORSHIP_PR_BODY: ${{ github.event.pull_request.body }}
+        run: sh tools/authorship-check.sh ci "$BASE_SHA" "$HEAD_SHA" "$HEAD_REF"
