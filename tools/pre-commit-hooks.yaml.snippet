@@ -1,0 +1,26 @@
+# Authorship check entries for .pre-commit-config.yaml (pre-commit framework).
+# Paste under "repos:". Also add at the top level of the file:
+#   default_install_hook_types: [pre-commit, commit-msg, pre-push]
+# then run:  pre-commit install
+  - repo: local
+    hooks:
+      - id: authorship-check-pre-commit
+        name: authorship check (identity, branch, staged changes)
+        entry: sh tools/authorship-check.sh pre-commit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: authorship-check-commit-msg
+        name: authorship check (commit message)
+        entry: sh tools/authorship-check.sh commit-msg
+        language: system
+        always_run: true
+        stages: [commit-msg]
+      - id: authorship-check-pre-push
+        name: authorship check (pushed commits and branch)
+        entry: sh tools/authorship-check.sh pre-push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
